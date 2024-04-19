@@ -1,0 +1,10 @@
+version: '3'
+services:
+  smart-home-pc:
+    image: thanhtunguet/smart-home-pc:amd64
+    network_mode: host
+    container_name: 'smart-home-pc'
+    command:
+      - dotnet
+      - SmartHomePCControl.dll
+      - "--urls http://0.0.0.0:5000"
