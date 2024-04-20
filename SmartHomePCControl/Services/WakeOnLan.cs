@@ -67,4 +67,27 @@ public static class WakeOnLan
             return false;
         }
     }
+    
+    public static void SendWakeUpSignal(string ipAddress, int port)
+    {
+        try
+        {
+            // Create a TCP client
+            using TcpClient client = new TcpClient();
+            // Connect to the server
+            client.Connect(IPAddress.Parse(ipAddress), port);
+
+            // Send a wake-up message
+            string message = "wake-my-pc-up";
+            byte[] data = Encoding.ASCII.GetBytes(message);
+            NetworkStream stream = client.GetStream();
+            stream.Write(data, 0, data.Length);
+
+            Console.WriteLine("Wake-up signal sent successfully.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error sending wake-up signal: " + ex.Message);
+        }
+    }
 }

@@ -159,6 +159,7 @@ public class GoogleHomeController : ControllerBase
                 {
                     // Turn on PC
                     WakeOnLan.SendMagicPacket(DEVICE_MAC);
+                    WakeOnLan.SendWakeUpSignal("192.168.97.2", 10675);
                 }
                 else
                 {
