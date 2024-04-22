@@ -34,6 +34,5 @@ jobs:
         with:
           context: SmartHomePCControl
           file: SmartHomePCControl/Dockerfile
-          platforms: linux/arm64,linux/amd64
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/smart-home-pc:latest
