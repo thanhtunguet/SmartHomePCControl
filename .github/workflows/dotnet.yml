@@ -8,6 +8,13 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            platform: ubuntu-latest
+          - arch: arm64
+            platform: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -27,6 +34,5 @@ jobs:
         with:
           context: SmartHomePCControl
           file: SmartHomePCControl/Dockerfile
-          platforms: linux/arm64,linux/amd64
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/smart-home-pc:latest
