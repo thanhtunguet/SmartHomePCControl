@@ -11,7 +11,7 @@ public class SyncResponseDto : ResponseDto
 
 public class SyncResponsePayload : ResponsePayload
 {
-    public string agentUserId { get; set; }
+    public string? agentUserId { get; set; }
 
     public Device[] devices { get; set; }
 }

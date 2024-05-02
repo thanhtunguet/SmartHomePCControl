@@ -30,7 +30,7 @@ public static class WakeOnLan
         client.Send(magicPacket, magicPacket.Length);
     }
 
-    public static void SendShutdownCommand(string ipAddress, int port)
+    public static void SendUdpShutdownCommand(string ipAddress, int port)
     {
         try
         {
@@ -45,6 +45,30 @@ public static class WakeOnLan
         {
             // Handle any exceptions, such as network errors
             Console.WriteLine($"Error occurred while sending shutdown command: {ex.Message}");
+        }
+    }
+
+    public static void SendTcpShutdownCommand(string ipAddress, int port)
+    {
+        try
+        {
+            // Create a TCP client
+            using TcpClient client = new TcpClient(ipAddress, port);
+            // Convert the message to bytes
+            string message = "shutdown-my-pc";
+            byte[] data = Encoding.ASCII.GetBytes(message);
+
+            // Get the network stream
+            NetworkStream stream = client.GetStream();
+
+            // Send the message
+            stream.Write(data, 0, data.Length);
+
+            Console.WriteLine("Message sent: " + message);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error: " + ex.Message);
         }
     }
 
@@ -67,7 +91,7 @@ public static class WakeOnLan
             return false;
         }
     }
-    
+
     public static void SendWakeUpSignal(string ipAddress, int port)
     {
         try
@@ -82,7 +106,6 @@ public static class WakeOnLan
             byte[] data = Encoding.ASCII.GetBytes(message);
             NetworkStream stream = client.GetStream();
             stream.Write(data, 0, data.Length);
-
             Console.WriteLine("Wake-up signal sent successfully.");
         }
         catch (Exception ex)

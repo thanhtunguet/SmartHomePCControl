@@ -17,6 +17,6 @@ public class WakeOnLanTest
     [TestMethod]
     public void TestShutDownCommand()
     {
-        WakeOnLan.SendShutdownCommand("192.168.97.3", 10675);
+        WakeOnLan.SendUdpShutdownCommand("192.168.97.3", 10675);
     }
 }

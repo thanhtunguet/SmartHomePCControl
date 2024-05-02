@@ -1,10 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.Net.Sockets;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using SmartHomePCControl.Models;
 using SmartHomePCControl.Services;
 using Newtonsoft.Json;
@@ -15,19 +10,19 @@ namespace SmartHomePCControl.Controllers;
 [Route("/smart-home")]
 public class GoogleHomeController : ControllerBase
 {
-    private static string DEVICE_ID = "MyPC";
+    private const string DeviceId = "MyPC";
 
-    private static string DEVICE_MAC = "58:11:22:c8:57:67";
+    private const string DeviceMac = "58:11:22:c8:57:67";
 
-    private static string SERVER_IP = "192.168.97.3";
+    private const string ServerIp = "192.168.97.3";
 
-    private static int SERVER_PORT = 3389;
+    private const int ServerPort = 3389;
 
-    private static int SERVER_SHUTDOWN_PORT = 10675;
+    private const int ServerShutdownPort = 10675;
 
-    private static Device pcDevice = new()
+    private static readonly Device PcDevice = new()
     {
-        id = DEVICE_ID,
+        id = DeviceId,
         type = "action.devices.types.SWITCH",
         traits = new[]
         {
@@ -93,7 +88,7 @@ public class GoogleHomeController : ControllerBase
                 agentUserId = request.agentUserId,
                 devices = new[]
                 {
-                    pcDevice,
+                    PcDevice,
                 }
             }
         };
@@ -107,11 +102,11 @@ public class GoogleHomeController : ControllerBase
         var devices = new Dictionary<string, DeviceAttributes>
         {
             {
-                DEVICE_ID,
+                DeviceId,
                 new DeviceAttributes()
                 {
                     status = QueryStatus.SUCCESS,
-                    on = WakeOnLan.IsPCOn(SERVER_IP, SERVER_PORT),
+                    on = WakeOnLan.IsPCOn(ServerIp, ServerPort),
                     online = true,
                 }
             }
@@ -158,13 +153,16 @@ public class GoogleHomeController : ControllerBase
                 if (states.on)
                 {
                     // Turn on PC
-                    WakeOnLan.SendMagicPacket(DEVICE_MAC);
+                    WakeOnLan.SendMagicPacket(DeviceMac);
+                    // Send Wakeup signal to Socket server
                     WakeOnLan.SendWakeUpSignal("192.168.97.2", 10675);
                 }
                 else
                 {
-                    // Turn off PC
-                    WakeOnLan.SendShutdownCommand(SERVER_IP, SERVER_SHUTDOWN_PORT);
+                    // Turn off PC via UDP Socket
+                    WakeOnLan.SendUdpShutdownCommand(ServerIp, ServerShutdownPort);
+                    // Turn off PC via TCP Socket
+                    WakeOnLan.SendTcpShutdownCommand(ServerIp, ServerShutdownPort);
                 }
 
                 break;
@@ -179,9 +177,9 @@ public class GoogleHomeController : ControllerBase
                 {
                     new()
                     {
-                        ids = new string[]
+                        ids = new[]
                         {
-                            DEVICE_ID,
+                            DeviceId,
                         },
                         status = QueryStatus.SUCCESS,
                         states = states,

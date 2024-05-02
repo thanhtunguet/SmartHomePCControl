@@ -1,10 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
 using System.Net;
-using System.Net.Http;
-using System.Threading.Tasks;
 
 namespace SmartHomePCControl.Controllers;
 
@@ -92,7 +87,7 @@ public class AuthController : ControllerBase
             };
         }
 
-        _logger.LogInformation("token:", token);
+        _logger.LogInformation("Token={0}\n", token);
         return Ok(token);
     }
 }
