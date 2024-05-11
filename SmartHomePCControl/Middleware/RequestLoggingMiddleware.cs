@@ -1,3 +1,5 @@
+namespace SmartHomePCControl.Middleware;
+
 public class RequestLoggingMiddleware
 {
     private readonly RequestDelegate _next;

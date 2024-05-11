@@ -30,7 +30,7 @@ public static class WakeOnLan
         client.Send(magicPacket, magicPacket.Length);
     }
 
-    public static void SendUdpShutdownCommand(string ipAddress, int port)
+    public static void SendShutdownCommand(string ipAddress, int port)
     {
         try
         {
@@ -45,30 +45,6 @@ public static class WakeOnLan
         {
             // Handle any exceptions, such as network errors
             Console.WriteLine($"Error occurred while sending shutdown command: {ex.Message}");
-        }
-    }
-
-    public static void SendTcpShutdownCommand(string ipAddress, int port)
-    {
-        try
-        {
-            // Create a TCP client
-            using TcpClient client = new TcpClient(ipAddress, port);
-            // Convert the message to bytes
-            string message = "shutdown-my-pc";
-            byte[] data = Encoding.ASCII.GetBytes(message);
-
-            // Get the network stream
-            NetworkStream stream = client.GetStream();
-
-            // Send the message
-            stream.Write(data, 0, data.Length);
-
-            Console.WriteLine("Message sent: " + message);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Error: " + ex.Message);
         }
     }
 
@@ -92,7 +68,7 @@ public static class WakeOnLan
         }
     }
 
-    public static void SendWakeUpSignal(string ipAddress, int port)
+    private static void SendTcpMessage(string message, string ipAddress, int port)
     {
         try
         {
@@ -101,16 +77,25 @@ public static class WakeOnLan
             // Connect to the server
             client.Connect(IPAddress.Parse(ipAddress), port);
 
-            // Send a wake-up message
-            string message = "wake-my-pc-up";
             byte[] data = Encoding.ASCII.GetBytes(message);
             NetworkStream stream = client.GetStream();
             stream.Write(data, 0, data.Length);
-            Console.WriteLine("Wake-up signal sent successfully.");
+
+            Console.WriteLine("TCP signal sent successfully.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Error sending wake-up signal: " + ex.Message);
+            Console.WriteLine("Error sending TCP signal: " + ex.Message);
         }
+    }
+
+    public static void SendWakeUpSignal(string ipAddress, int port)
+    {
+        SendTcpMessage("shutdown-my-pc", ipAddress, port);
+    }
+
+    public static void SendRebootSignal(string ipAddress, int port)
+    {
+        SendTcpMessage("reboot-my-pc", ipAddress, port);
     }
 }

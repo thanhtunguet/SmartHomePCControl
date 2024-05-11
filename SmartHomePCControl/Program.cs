@@ -1,4 +1,5 @@
 using dotenv.net;
+using SmartHomePCControl.Middleware;
 
 DotEnv.Load();
 
@@ -29,16 +30,3 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
-
-public static class MiddlewareExtensions
-{
-    public static IApplicationBuilder UseRequestLogging(this IApplicationBuilder builder)
-    {
-        return builder.UseMiddleware<RequestLoggingMiddleware>();
-    }
-
-    public static IApplicationBuilder UseResponseLogging(this IApplicationBuilder builder)
-    {
-        return builder.UseMiddleware<ResponseLoggingMiddleware>();
-    }
-}
