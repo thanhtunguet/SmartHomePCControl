@@ -6,6 +6,26 @@ namespace SmartHomePCControl.Services;
 
 public static class WakeOnLan
 {
+    // Define a method to check if the PC is on/off based on socket port
+    public static bool IsPCOn(string ipAddress, int port)
+    {
+        using var tcpClient = new TcpClient();
+        try
+        {
+            // Attempt to connect to the PC's IP address and socket port
+            tcpClient.SendTimeout = 500;
+            tcpClient.ReceiveTimeout = 500;
+            tcpClient.Connect(ipAddress, port);
+            // If connection succeeds, port 3389 is open (PC is on)
+            return true;
+        }
+        catch (SocketException)
+        {
+            // If connection fails, port 3389 is closed (PC is off or unreachable)
+            return false;
+        }
+    }
+
     public static void SendMagicPacket(string macAddress)
     {
         // Validate MAC address and remove any non-hexadecimal characters.
@@ -30,7 +50,7 @@ public static class WakeOnLan
         client.Send(magicPacket, magicPacket.Length);
     }
 
-    public static void SendShutdownCommand(string ipAddress, int port)
+    public static void SendUdpShutdownCommand(string ipAddress, int port)
     {
         try
         {
@@ -48,27 +68,18 @@ public static class WakeOnLan
         }
     }
 
-    // Define a method to check if the PC is on/off based on socket port
-    public static bool IsPCOn(string ipAddress, int port)
+    public static void SendTcpShutdownCommand(string ipAddress, int port)
     {
-        using var tcpClient = new TcpClient();
-        try
-        {
-            // Attempt to connect to the PC's IP address and socket port
-            tcpClient.SendTimeout = 500;
-            tcpClient.ReceiveTimeout = 500;
-            tcpClient.Connect(ipAddress, port);
-            // If connection succeeds, port 3389 is open (PC is on)
-            return true;
-        }
-        catch (SocketException)
-        {
-            // If connection fails, port 3389 is closed (PC is off or unreachable)
-            return false;
-        }
+        SendTcpMessage(ipAddress, port, "shutdown-my-pc");
     }
 
-    private static void SendTcpMessage(string message, string ipAddress, int port)
+
+    public static void SendWakeUpSignal(string ipAddress, int port)
+    {
+        SendTcpMessage(ipAddress, port, "wake-up-my-pc");
+    }
+
+    private static void SendTcpMessage(string ipAddress, int port, string message)
     {
         try
         {
@@ -76,26 +87,19 @@ public static class WakeOnLan
             using TcpClient client = new TcpClient();
             // Connect to the server
             client.Connect(IPAddress.Parse(ipAddress), port);
-
             byte[] data = Encoding.ASCII.GetBytes(message);
             NetworkStream stream = client.GetStream();
             stream.Write(data, 0, data.Length);
-
-            Console.WriteLine("TCP signal sent successfully.");
+            Console.WriteLine("TCP message sent successfully.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Error sending TCP signal: " + ex.Message);
+            Console.WriteLine("Error sending TCP message: " + ex.Message);
         }
     }
 
-    public static void SendWakeUpSignal(string ipAddress, int port)
+    public static void SendRebootCommand(string ipAddress, int port)
     {
-        SendTcpMessage("shutdown-my-pc", ipAddress, port);
-    }
-
-    public static void SendRebootSignal(string ipAddress, int port)
-    {
-        SendTcpMessage("reboot-my-pc", ipAddress, port);
+        SendTcpMessage(ipAddress, port, "reboot-my-pc");
     }
 }

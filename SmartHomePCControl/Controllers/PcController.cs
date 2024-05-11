@@ -169,7 +169,7 @@ public class GoogleHomeController : ControllerBase
 
             case DeviceCommands.Reboot:
                 states.on = execution.Params.on;
-                WakeOnLan.SendRebootSignal("192.168.97.2", 10675);
+                WakeOnLan.SendRebootCommand("192.168.97.2", 10675);
                 break;
         }
 
