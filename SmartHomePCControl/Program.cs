@@ -15,12 +15,8 @@ builder.Services.AddScoped<WakeOnLanService>();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
 
@@ -30,5 +26,6 @@ app.UseResponseLogging();
 app.UseAuthorization();
 
 app.MapControllers();
+app.UseCors();
 
 app.Run();
