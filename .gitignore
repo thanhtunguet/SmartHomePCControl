@@ -4,3 +4,6 @@ obj/
 .DS_Store
 Folder.DotSettings.user
 TestResults/
+build/
+publish/
+.env

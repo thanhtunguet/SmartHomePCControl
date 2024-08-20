@@ -2,195 +2,175 @@ using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 using SmartHomePCControl.Models;
 using SmartHomePCControl.Services;
-using Newtonsoft.Json;
 
-namespace SmartHomePCControl.Controllers;
-
-[ApiController]
-[Route("/smart-home")]
-public class GoogleHomeController : ControllerBase
+namespace SmartHomePCControl.Controllers
 {
-    private const string DeviceId = "MyPC";
-
-    private const string DeviceMac = "58:11:22:c8:57:67";
-
-    private const string ServerIp = "192.168.97.3";
-
-    private const int ServerPort = 3389;
-
-    private const int ServerShutdownPort = 10675;
-
-    private static readonly Device PcDevice = new()
+    [ApiController]
+    public class GoogleHomeController : ControllerBase
     {
-        id = DeviceId,
-        type = "action.devices.types.SWITCH",
-        traits = new[]
+        private readonly WakeOnLanService _wakeOnLanService;
+
+        public GoogleHomeController(WakeOnLanService wakeOnLanService)
         {
-            DeviceTraits.OnOff,
-        },
-        name = new DeviceName
-        {
-            name = "My PC",
-        },
-        willReportState = true,
-        deviceInfo = new DeviceInfo
-        {
-            Manufacturer = "Asus",
-            Model = "DesktopComputer",
-            HwVersion = "Core i5 13400F",
-            SwVersion = "Windows 11",
+            _wakeOnLanService = wakeOnLanService;
         }
-    };
 
-    [HttpPost]
-    public IActionResult HandleSmartHomeRequest([FromBody] JsonElement request)
-    {
-        var jsonString = request.ToString();
-        var requestDto = JsonConvert.DeserializeObject<RequestDto>(jsonString);
-        if (requestDto != null)
+        private const string DeviceMac = "58:11:22:c8:57:67";
+        private const string ServerIp = "192.168.97.3";
+        private const int ServerPort = 3389;
+        private const int ServerShutdownPort = 10675;
+
+        // Static instance of the device
+        private static readonly Device PcDevice = new Device()
         {
+            id = "MyPC",
+            type = "action.devices.types.SWITCH",
+            traits = new[] { DeviceTraits.OnOff },
+            name = new DeviceName { name = "My PC" },
+            willReportState = true,
+            deviceInfo = new DeviceInfo
+            {
+                Manufacturer = "Asus",
+                Model = "DesktopComputer",
+                HwVersion = "Core i5 13400F",
+                SwVersion = "Windows 11",
+            }
+        };
+
+        [HttpGet(PcControllerRoute.TurnOn)]
+        public async Task<IActionResult> HandleWakeUpDevice()
+        {
+            _wakeOnLanService.SendMagicPacket(DeviceMac);
+            return await Task.FromResult(Ok());
+        }
+
+        [HttpGet(PcControllerRoute.TurnOff)]
+        public async Task<IActionResult> HandleShutdownDevice()
+        {
+            _wakeOnLanService.SendUdpShutdownCommand(ServerIp, ServerShutdownPort);
+            _wakeOnLanService.SendTcpCommand(ServerIp, ServerShutdownPort, WakeOnLanService.TcpCommand.Shutdown);
+            return await Task.FromResult(Ok());
+        }
+
+        [HttpPost(PcControllerRoute.GoogleActions)]
+        public async Task<IActionResult> HandleSmartHomeRequest([FromBody] JsonElement request)
+        {
+            var jsonString = request.ToString();
+            var requestDto = JsonSerializer.Deserialize<RequestDto>(jsonString);
+
+            if (requestDto == null || requestDto.inputs == null || !requestDto.inputs.Any())
+            {
+                return BadRequest("Invalid request format");
+            }
+
             string intent = requestDto.inputs[0].intent;
 
             Console.WriteLine($"Intent = {intent}");
-            switch (intent)
+            return intent switch
             {
-                case "action.devices.SYNC":
-                    var syncRequestDto = JsonConvert.DeserializeObject<SyncRequestDto>(jsonString);
-                    if (syncRequestDto != null)
-                        return SyncDevices(syncRequestDto);
-                    break;
-
-                case "action.devices.QUERY":
-                    var queryRequestDto = JsonConvert.DeserializeObject<QueryRequestDto>(jsonString);
-                    if (queryRequestDto != null)
-                        return QueryDevices(queryRequestDto);
-                    break;
-
-                case "action.devices.EXECUTE":
-                    var executeRequestDto = JsonConvert.DeserializeObject<ExecuteRequestDto>(jsonString);
-                    if (executeRequestDto != null)
-                        return ExecuteCommand(executeRequestDto);
-                    break;
-            }
+                "action.devices.SYNC" => SyncDevices(requestDto),
+                "action.devices.QUERY" => await QueryDevices(requestDto),
+                "action.devices.EXECUTE" => await ExecuteCommand(requestDto as ExecuteRequestDto),
+                _ => BadRequest("Invalid intent")
+            };
         }
 
-        return BadRequest("Invalid intent");
-    }
-
-    private IActionResult SyncDevices(SyncRequestDto request)
-    {
-        // Create a sync response
-        var response = new SyncResponseDto
+        private IActionResult SyncDevices(RequestDto request)
         {
-            requestId = request.requestId,
-            payload = new SyncResponsePayload()
+            var response = new SyncResponseDto
             {
-                agentUserId = request.agentUserId,
-                devices = new[]
+                requestId = request.requestId,
+                payload = new SyncResponsePayload
                 {
-                    PcDevice,
+                    agentUserId = request.agentUserId,
+                    devices = new[] { PcDevice }
                 }
-            }
-        };
+            };
 
-        // Return the response
-        return Ok(response);
-    }
-
-    private IActionResult QueryDevices(QueryRequestDto request)
-    {
-        var devices = new Dictionary<string, DeviceAttributes>
-        {
-            {
-                DeviceId,
-                new DeviceAttributes()
-                {
-                    status = QueryStatus.SUCCESS,
-                    on = WakeOnLan.IsPCOn(ServerIp, ServerPort),
-                    online = true,
-                }
-            }
-        };
-        // Create a query response
-        var response = new QueryResponseDto
-        {
-            requestId = request.requestId,
-            payload = new QueryResponsePayload()
-            {
-                devices = devices,
-            }
-        };
-
-        // Return the response
-        return Ok(response);
-    }
-
-
-    private IActionResult ExecuteCommand(ExecuteRequestDto request)
-    {
-        // Process the execute request and perform the corresponding action
-        ExecuteResponseDto response = ProcessExecuteRequest(request);
-
-        // Return the response
-        return Ok(response);
-    }
-
-    private ExecuteResponseDto ProcessExecuteRequest(ExecuteRequestDto request)
-    {
-        var states = new DeviceAttributes()
-        {
-            online = true,
-            status = QueryStatus.SUCCESS,
-            on = false,
-        };
-
-        var execution = request.inputs[0].payload.commands[0].execution[0];
-
-        switch (execution.command)
-        {
-            case DeviceCommands.OnOff:
-                states.on = execution.Params.on;
-                if (states.on)
-                {
-                    // Turn on PC
-                    WakeOnLan.SendMagicPacket(DeviceMac);
-                    // Send Wakeup signal to Socket server
-                    WakeOnLan.SendWakeUpSignal("192.168.97.2", 10675);
-                }
-                else
-                {
-                    // Turn off PC via UDP Socket
-                    WakeOnLan.SendUdpShutdownCommand(ServerIp, ServerShutdownPort);
-                    // Turn off PC via TCP Socket
-                    WakeOnLan.SendTcpShutdownCommand(ServerIp, ServerShutdownPort);
-                }
-
-                break;
-
-            case DeviceCommands.Reboot:
-                states.on = execution.Params.on;
-                WakeOnLan.SendRebootCommand("192.168.97.2", 10675);
-                break;
+            return Ok(response);
         }
 
-        return new ExecuteResponseDto
+        private async Task<IActionResult> QueryDevices(RequestDto request)
         {
-            requestId = request.requestId,
-            payload = new ExecuteResponsePayload
+            var devices = new Dictionary<string, DeviceAttributes>
             {
-                commands = new ExecuteResponseCommand[]
                 {
-                    new()
+                    PcDevice.id,
+                    new DeviceAttributes
                     {
-                        ids = new[]
-                        {
-                            DeviceId,
-                        },
                         status = QueryStatus.SUCCESS,
-                        states = states,
+                        on = await _wakeOnLanService.IsPCOnAsync(ServerIp, ServerPort),
+                        online = true
                     }
                 }
+            };
+
+            var response = new QueryResponseDto
+            {
+                requestId = request.requestId,
+                payload = new QueryResponsePayload
+                {
+                    devices = devices
+                }
+            };
+
+            return Ok(response);
+        }
+
+        private async Task<IActionResult> ExecuteCommand(ExecuteRequestDto request)
+        {
+            ExecuteResponseDto response = await ProcessExecuteRequestAsync(request);
+            return Ok(response);
+        }
+
+        private async Task<ExecuteResponseDto> ProcessExecuteRequestAsync(ExecuteRequestDto request)
+        {
+            var states = new DeviceAttributes
+            {
+                online = true,
+                status = QueryStatus.SUCCESS,
+                on = false
+            };
+
+            var execution = request.inputs[0].payload.commands[0].execution[0];
+
+            switch (execution.command)
+            {
+                case DeviceCommands.OnOff:
+                    states.on = execution.Params.on;
+                    if (states.on)
+                    {
+                        _wakeOnLanService.SendMagicPacket(DeviceMac);
+                    }
+                    else
+                    {
+                        _wakeOnLanService.SendUdpShutdownCommand(ServerIp, ServerShutdownPort);
+                        _wakeOnLanService.SendTcpCommand(
+                            ServerIp,
+                            ServerShutdownPort,
+                            WakeOnLanService.TcpCommand.Shutdown
+                        );
+                    }
+
+                    break;
             }
-        };
+
+            return new ExecuteResponseDto
+            {
+                requestId = request.requestId,
+                payload = new ExecuteResponsePayload
+                {
+                    commands = new[]
+                    {
+                        new ExecuteResponseCommand
+                        {
+                            ids = new[] { PcDevice.id },
+                            status = QueryStatus.SUCCESS,
+                            states = states
+                        }
+                    }
+                }
+            };
+        }
     }
 }
