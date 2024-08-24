@@ -40,15 +40,14 @@ public class GoogleHomeController : ControllerBase
     [HttpGet(PcControllerRoute.TurnOn)]
     public async Task<IActionResult> HandleWakeUpDevice()
     {
-        _wakeOnLanService.SendMagicPacket(DeviceMac);
+        TurnOnMyPC();
         return await Task.FromResult(Ok());
     }
 
     [HttpGet(PcControllerRoute.TurnOff)]
     public async Task<IActionResult> HandleShutdownDevice()
     {
-        _wakeOnLanService.SendUdpShutdownCommand(ServerIp, ServerShutdownPort);
-        _wakeOnLanService.SendTcpCommand(ServerIp, ServerShutdownPort, WakeOnLanService.TcpCommand.Shutdown);
+        TurnOffMyPC();
         return await Task.FromResult(Ok());
     }
 
@@ -123,6 +122,21 @@ public class GoogleHomeController : ControllerBase
         return Ok(response);
     }
 
+    private void TurnOffMyPC()
+    {
+        _wakeOnLanService.SendUdpShutdownCommand(ServerIp, ServerShutdownPort);
+        _wakeOnLanService.SendTcpCommand(
+            ServerIp,
+            ServerShutdownPort,
+            WakeOnLanService.TcpCommand.Shutdown
+        );
+    }
+
+    private void TurnOnMyPC()
+    {
+        _wakeOnLanService.SendMagicPacket(DeviceMac);
+    }
+
     private async Task<ExecuteResponseDto> ProcessExecuteRequestAsync(ExecuteRequestDto request)
     {
         var states = new DeviceAttributes
@@ -140,16 +154,11 @@ public class GoogleHomeController : ControllerBase
                 states.on = execution.Params.on;
                 if (states.on)
                 {
-                    _wakeOnLanService.SendMagicPacket(DeviceMac);
+                    TurnOnMyPC();
                 }
                 else
                 {
-                    _wakeOnLanService.SendUdpShutdownCommand(ServerIp, ServerShutdownPort);
-                    _wakeOnLanService.SendTcpCommand(
-                        ServerIp,
-                        ServerShutdownPort,
-                        WakeOnLanService.TcpCommand.Shutdown
-                    );
+                    TurnOffMyPC();
                 }
 
                 break;
