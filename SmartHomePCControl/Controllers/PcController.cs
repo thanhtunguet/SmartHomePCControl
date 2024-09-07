@@ -54,29 +54,38 @@ public class GoogleHomeController : ControllerBase
     [HttpPost(PcControllerRoute.GoogleActions)]
     public async Task<IActionResult> HandleSmartHomeRequest([FromBody] JsonElement request)
     {
-        var jsonString = request.ToString();
-        var requestDto = JsonSerializer.Deserialize<RequestDto>(jsonString);
+        string jsonString = request.ToString();
+        RequestDto requestDto = JsonSerializer.Deserialize<RequestDto>(jsonString);
 
-        if (requestDto == null || requestDto.inputs == null || !requestDto.inputs.Any())
+        if (requestDto == null || requestDto?.inputs == null || !requestDto.inputs.Any())
         {
             return BadRequest("Invalid request format");
         }
 
         string intent = requestDto.inputs[0].intent;
 
-        Console.WriteLine($"Intent = {intent}");
-        return intent switch
+        switch (intent)
         {
-            "action.devices.SYNC" => SyncDevices(requestDto),
-            "action.devices.QUERY" => await QueryDevices(requestDto),
-            "action.devices.EXECUTE" => await ExecuteCommand(requestDto as ExecuteRequestDto),
-            _ => BadRequest("Invalid intent")
-        };
+            case DeviceAction.Sync:
+                SyncRequestDto syncRequestDto = JsonSerializer.Deserialize<SyncRequestDto>(jsonString);
+                return SyncDevices(syncRequestDto);
+
+            case DeviceAction.Query:
+                QueryRequestDto queryRequestDto = JsonSerializer.Deserialize<QueryRequestDto>(jsonString);
+                return await QueryDevices(queryRequestDto);
+
+            case DeviceAction.Execute:
+                ExecuteRequestDto executeRequestDto = JsonSerializer.Deserialize<ExecuteRequestDto>(jsonString);
+                return await ExecuteCommand(executeRequestDto);
+
+            default:
+                return BadRequest("Invalid intent");
+        }
     }
 
     private IActionResult SyncDevices(RequestDto request)
     {
-        var response = new SyncResponseDto
+        SyncResponseDto response = new SyncResponseDto
         {
             requestId = request.requestId,
             payload = new SyncResponsePayload
@@ -91,7 +100,7 @@ public class GoogleHomeController : ControllerBase
 
     private async Task<IActionResult> QueryDevices(RequestDto request)
     {
-        var devices = new Dictionary<string, DeviceAttributes>
+        Dictionary<string, DeviceAttributes> devices = new Dictionary<string, DeviceAttributes>
         {
             {
                 PcDevice.id,
@@ -104,7 +113,7 @@ public class GoogleHomeController : ControllerBase
             }
         };
 
-        var response = new QueryResponseDto
+        QueryResponseDto response = new QueryResponseDto
         {
             requestId = request.requestId,
             payload = new QueryResponsePayload
@@ -139,14 +148,14 @@ public class GoogleHomeController : ControllerBase
 
     private async Task<ExecuteResponseDto> ProcessExecuteRequestAsync(ExecuteRequestDto request)
     {
-        var states = new DeviceAttributes
+        DeviceAttributes states = new DeviceAttributes
         {
             online = true,
             status = QueryStatus.SUCCESS,
             on = false
         };
 
-        var execution = request.inputs[0].payload.commands[0].execution[0];
+        Execution execution = request.inputs[0].payload.commands[0].execution[0];
 
         switch (execution.command)
         {

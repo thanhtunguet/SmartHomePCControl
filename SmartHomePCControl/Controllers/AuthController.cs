@@ -41,7 +41,7 @@ public class AuthController : ControllerBase
     public IActionResult PostLogin([FromForm] string response_url)
     {
         _logger.LogInformation("/login", response_url);
-        var decodedResponseUrl = WebUtility.UrlDecode(response_url);
+        string decodedResponseUrl = WebUtility.UrlDecode(response_url);
         _logger.LogInformation("redirect:", decodedResponseUrl);
         return Redirect(decodedResponseUrl);
     }
@@ -50,10 +50,10 @@ public class AuthController : ControllerBase
     public IActionResult FakeAuth(string redirect_uri, string state)
     {
         _logger.LogInformation("/fakeauth", redirect_uri, state);
-        var responseUrl = string.Format("{0}?code={1}&state={2}", WebUtility.UrlDecode(redirect_uri), "xxxxxx", state);
-        var redirectUrl = $"/login?" +
-                          $"response_url" +
-                          $"={WebUtility.UrlEncode(responseUrl)}";
+        string responseUrl = string.Format("{0}?code={1}&state={2}", WebUtility.UrlDecode(redirect_uri), "xxxxxx", state);
+        string redirectUrl = $"/login?" +
+                             $"response_url" +
+                             $"={WebUtility.UrlEncode(responseUrl)}";
         _logger.LogInformation("redirect:", redirectUrl);
         return Redirect(redirectUrl);
     }
@@ -61,11 +61,11 @@ public class AuthController : ControllerBase
     [HttpPost("faketoken")]
     public IActionResult FakeToken([FromForm] Dictionary<string, string> body)
     {
-        var grant_type = body["grant_type"];
+        string grant_type = body["grant_type"];
         _logger.LogInformation("/faketoken", grant_type, body);
-        var secondsInDay = 86400; // 60 * 60 * 24
-        var token = new Dictionary<string, object>();
-        var tokenType = "bearer";
+        long secondsInDay = 86400; // 60 * 60 * 24
+        Dictionary<string, object> token = new Dictionary<string, object>();
+        string tokenType = "bearer";
 
         if (grant_type == "authorization_code")
         {
