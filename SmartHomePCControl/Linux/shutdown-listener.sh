@@ -1,30 +1,18 @@
 #!/bin/bash
 
-# Set the port number
-PORT=10675
+PORT="$1"
+KEYWORD="shutdown-my-pc"
 
-# Function to handle shutdown
-shutdown_computer() {
-    echo "Shutting down the computer..."
-    sudo shutdown now
-}
+while true; do
+  echo "Listening on port $PORT..."
+  # Use nc to listen on $PORT, receive a single line, and store it
+  MESSAGE=$(nc -l -p "$PORT" -q 1)
 
-# Main function
-main() {
-# Start listening on the specified port
-    echo "Listening for shutdown command on port $PORT..."
-    while true; do
-# Listen for incoming messages on the specified port
-        MESSAGE=$(nc -l -p $PORT)
-        
-        # Check if the received message is the shutdown command
-        if [ "$MESSAGE" == "shutdown-my-pc" ]; then
-            shutdown_computer
-        else
-            echo "Received unknown message: $MESSAGE"
-        fi
-    done
-}
+  echo "Received: $MESSAGE"
 
-# Execute the main function
-main
+  if [[ "$MESSAGE" == "$KEYWORD" ]]; then
+    echo "Shutdown command received. Shutting down..."
+    shutdown now
+    exit 0
+  fi
+done

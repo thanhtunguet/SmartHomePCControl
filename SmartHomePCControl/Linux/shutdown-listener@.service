@@ -1,0 +1,11 @@
+[Unit]
+Description=TCP Shutdown Listener Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/shutdown-listener %i
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
