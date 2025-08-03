@@ -1,0 +1,1 @@
+This project is a .NET application that allows controlling a home PC using Google Smart Home assistant.

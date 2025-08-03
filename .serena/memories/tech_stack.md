@@ -1,0 +1,4 @@
+- .NET 7.0
+- ASP.NET Core
+- Docker
+- MSTest for testing
