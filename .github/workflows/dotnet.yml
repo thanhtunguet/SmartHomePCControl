@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'SmartHomePCControl/**'
+      - 'SmartHomePCControl.Tests/**'
 
 jobs:
   build:
