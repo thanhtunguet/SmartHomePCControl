@@ -1,7 +1,7 @@
 SmartHomePCControl
 ------------------
 
-Control your Home PC using Google Smart Home assistant
+Control your Home PC using ~~Google Smart Home assistant~~ Web APIs
 
 ## Installation
 
