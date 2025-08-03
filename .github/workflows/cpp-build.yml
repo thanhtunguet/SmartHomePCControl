@@ -37,7 +37,7 @@ jobs:
           cmake --build .
 
       - name: Upload Artifact for ${{ matrix.arch }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: SmartHomePCControl-CPP/build/${{ matrix.arch }}/smarthome_pc_controller
