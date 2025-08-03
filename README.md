@@ -35,6 +35,20 @@ You can initialize this repository with code from a Subversion, Mercurial, or TF
 
 [Import code](https://github.com/thanhtunguet/SmartHomePCControl/import)
 
+## Configuration
+
+This project is configured using environment variables. You can create a `.env` file in the `SmartHomePCControl` directory to store these variables. The following variables are required:
+
+- `DEVICE_MAC`: The MAC address of the PC you want to control.
+- `SERVER_IP`: The IP address of the PC you want to control.
+
+Example `.env` file:
+
+```
+DEVICE_MAC=00:11:22:33:44:55
+SERVER_IP=192.168.1.100
+```
+
 ## Usage
 
 Running the project using docker compose

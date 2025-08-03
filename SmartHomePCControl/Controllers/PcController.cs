@@ -10,13 +10,15 @@ public class GoogleHomeController : ControllerBase
 {
     private readonly WakeOnLanService _wakeOnLanService;
 
-    public GoogleHomeController(WakeOnLanService wakeOnLanService)
+        public GoogleHomeController(WakeOnLanService wakeOnLanService)
     {
         _wakeOnLanService = wakeOnLanService;
+        _deviceMac = Environment.GetEnvironmentVariable("DEVICE_MAC") ?? throw new ArgumentNullException("DEVICE_MAC environment variable not set");
+        _serverIp = Environment.GetEnvironmentVariable("SERVER_IP") ?? throw new ArgumentNullException("SERVER_IP environment variable not set");
     }
 
-    private const string DeviceMac = "58:11:22:c8:57:67";
-    private const string ServerIp = "192.168.97.3";
+    private readonly string _deviceMac;
+    private readonly string _serverIp;
     private const int ServerPort = 3389;
     private const int ServerShutdownPort = 10675;
 
@@ -107,7 +109,7 @@ public class GoogleHomeController : ControllerBase
                 new DeviceAttributes
                 {
                     status = QueryStatus.SUCCESS,
-                    on = await _wakeOnLanService.IsPCOnAsync(ServerIp, ServerPort),
+                    on = await _wakeOnLanService.IsPCOnAsync(_serverIp, ServerPort),
                     online = true
                 }
             }
@@ -133,9 +135,9 @@ public class GoogleHomeController : ControllerBase
 
     private void TurnOffMyPC()
     {
-        _wakeOnLanService.SendUdpShutdownCommand(ServerIp, ServerShutdownPort);
+        _wakeOnLanService.SendUdpShutdownCommand(_serverIp, ServerShutdownPort);
         _wakeOnLanService.SendTcpCommand(
-            ServerIp,
+            _serverIp,
             ServerShutdownPort,
             WakeOnLanService.TcpCommand.Shutdown
         );
@@ -143,7 +145,7 @@ public class GoogleHomeController : ControllerBase
 
     private void TurnOnMyPC()
     {
-        _wakeOnLanService.SendMagicPacket(DeviceMac);
+        _wakeOnLanService.SendMagicPacket(_deviceMac);
     }
 
     private async Task<ExecuteResponseDto> ProcessExecuteRequestAsync(ExecuteRequestDto request)
@@ -194,6 +196,6 @@ public class GoogleHomeController : ControllerBase
     [HttpGet(PcControllerRoute.IsOnline)]
     public async Task<bool> IsPCOnAsync()
     {
-        return await _wakeOnLanService.IsPCOnAsync(ServerIp, ServerPort);
+        return await _wakeOnLanService.IsPCOnAsync(_serverIp, ServerPort);
     }
 }
