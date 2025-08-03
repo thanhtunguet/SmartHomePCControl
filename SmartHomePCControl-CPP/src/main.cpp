@@ -65,10 +65,10 @@ bool send_magic_packet(const std::string& mac_address) {
     return true;
 }
 
-bool send_shutdown_command() {
+bool send_shutdown_command_udp() {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
-        perror("socket");
+        perror("socket (udp)");
         return false;
     }
 
@@ -79,13 +79,50 @@ bool send_shutdown_command() {
 
     const std::string command = "shutdown-my-pc";
     if (sendto(sock, command.c_str(), command.length(), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("sendto");
+        perror("sendto (udp)");
         close(sock);
         return false;
     }
 
     close(sock);
+    std::cout << "UDP shutdown command sent successfully." << std::endl;
     return true;
+}
+
+bool send_shutdown_command_tcp() {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        perror("socket (tcp)");
+        return false;
+    }
+
+    sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(SHUTDOWN_PORT);
+    server_addr.sin_addr.s_addr = inet_addr(SERVER_IP.c_str());
+
+    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("connect (tcp)");
+        close(sock);
+        return false;
+    }
+
+    const std::string command = "shutdown-my-pc";
+    if (send(sock, command.c_str(), command.length(), 0) < 0) {
+        perror("send (tcp)");
+        close(sock);
+        return false;
+    }
+
+    close(sock);
+    std::cout << "TCP shutdown command sent successfully." << std::endl;
+    return true;
+}
+
+bool send_shutdown_command() {
+    bool udp_success = send_shutdown_command_udp();
+    bool tcp_success = send_shutdown_command_tcp();
+    return udp_success || tcp_success; // Return true if at least one succeeds
 }
 
 bool is_pc_online() {
