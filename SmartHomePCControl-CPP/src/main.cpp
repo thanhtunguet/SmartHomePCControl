@@ -1,0 +1,180 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include <httplib.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+
+// --- Configuration --- //
+const char* get_env(const char* name, const char* default_val) {
+    const char* value = std::getenv(name);
+    return value ? value : default_val;
+}
+
+const std::string DEVICE_MAC = get_env("DEVICE_MAC", "00:00:00:00:00:00");
+const std::string SERVER_IP = get_env("SERVER_IP", "127.0.0.1");
+const int SHUTDOWN_PORT = 10675;
+const int PROBE_PORT = 3389; // RDP port, a good indicator of being online
+
+// --- Core Logic --- //
+
+bool send_magic_packet(const std::string& mac_address) {
+    std::vector<unsigned char> mac_bytes;
+    for (size_t i = 0; i < mac_address.length(); i += 3) {
+        mac_bytes.push_back(static_cast<unsigned char>(std::stoul(mac_address.substr(i, 2), nullptr, 16)));
+    }
+
+    if (mac_bytes.size() != 6) {
+        std::cerr << "Invalid MAC address format." << std::endl;
+        return false;
+    }
+
+    std::vector<unsigned char> magic_packet(102);
+    std::fill(magic_packet.begin(), magic_packet.begin() + 6, 0xFF);
+    for (int i = 1; i <= 16; ++i) {
+        std::copy(mac_bytes.begin(), mac_bytes.end(), magic_packet.begin() + (i * 6));
+    }
+
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        return false;
+    }
+
+    int broadcast = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast)) < 0) {
+        perror("setsockopt");
+        close(sock);
+        return false;
+    }
+
+    sockaddr_in broadcast_addr;
+    broadcast_addr.sin_family = AF_INET;
+    broadcast_addr.sin_port = htons(9);
+    broadcast_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
+
+    if (sendto(sock, magic_packet.data(), magic_packet.size(), 0, (struct sockaddr*)&broadcast_addr, sizeof(broadcast_addr)) < 0) {
+        perror("sendto");
+        close(sock);
+        return false;
+    }
+
+    close(sock);
+    return true;
+}
+
+bool send_shutdown_command() {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        return false;
+    }
+
+    sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(SHUTDOWN_PORT);
+    server_addr.sin_addr.s_addr = inet_addr(SERVER_IP.c_str());
+
+    const std::string command = "shutdown-my-pc";
+    if (sendto(sock, command.c_str(), command.length(), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("sendto");
+        close(sock);
+        return false;
+    }
+
+    close(sock);
+    return true;
+}
+
+bool is_pc_online() {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        return false;
+    }
+
+    // Set a timeout for the connection attempt
+    struct timeval timeout;
+    timeout.tv_sec = 1; // 1 second
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PROBE_PORT);
+    server_addr.sin_addr.s_addr = inet_addr(SERVER_IP.c_str());
+
+    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        close(sock);
+        return false;
+    }
+
+    close(sock);
+    return true;
+}
+
+// --- Web Server --- //
+
+int main(int argc, char** argv) {
+    httplib::Server svr;
+
+    // Add a logger for requests
+    svr.set_logger([](const httplib::Request& req, const httplib::Response& res) {
+        std::cout << "Request: " << req.method << " " << req.path << " -> Response: " << res.status << std::endl;
+    });
+
+    svr.Get("/turn-on", [](const httplib::Request&, httplib::Response& res) {
+        std::cout << "Action: Attempting to send magic packet to " << DEVICE_MAC << std::endl;
+        if (send_magic_packet(DEVICE_MAC)) {
+            res.set_content("Magic packet sent.", "text/plain");
+            std::cout << "Result: Success." << std::endl;
+        } else {
+            res.status = 500;
+            res.set_content("Failed to send magic packet.", "text/plain");
+            std::cerr << "Result: Failure." << std::endl;
+        }
+    });
+
+    svr.Get("/turn-off", [](const httplib::Request&, httplib::Response& res) {
+        std::cout << "Action: Attempting to send shutdown command to " << SERVER_IP << ":" << SHUTDOWN_PORT << std::endl;
+        if (send_shutdown_command()) {
+            res.set_content("Shutdown command sent.", "text/plain");
+            std::cout << "Result: Success." << std::endl;
+        } else {
+            res.status = 500;
+            res.set_content("Failed to send shutdown command.", "text/plain");
+            std::cerr << "Result: Failure." << std::endl;
+        }
+    });
+
+    svr.Get("/is-online", [](const httplib::Request&, httplib::Response& res) {
+        std::cout << "Action: Checking online status for " << SERVER_IP << ":" << PROBE_PORT << std::endl;
+        bool online = is_pc_online();
+        res.set_content(online ? "true" : "false", "text/plain");
+        std::cout << "Result: PC is " << (online ? "online" : "offline") << "." << std::endl;
+    });
+
+    int port = 8080;
+    if (argc > 1) {
+        try {
+            port = std::stoi(argv[1]);
+        } catch (const std::exception& e) {
+            std::cerr << "Invalid port number '" << argv[1] << "'. Using default 8080. Error: " << e.what() << std::endl;
+        }
+    }
+
+    std::cout << "--- SmartHomePCControl-CPP ---" << std::endl;
+    std::cout << "Configuration:" << std::endl;
+    std::cout << "  - DEVICE_MAC: " << DEVICE_MAC << std::endl;
+    std::cout << "  - SERVER_IP:  " << SERVER_IP << std::endl;
+    std::cout << "------------------------------" << std::endl;
+    std::cout << "Starting server on port " << port << "..." << std::endl;
+
+    if (!svr.listen("0.0.0.0", port)) {
+        std::cerr << "Failed to bind to port " << port << ". Is it already in use?" << std::endl;
+        return 1;
+    }
+
+    return 0;
+}

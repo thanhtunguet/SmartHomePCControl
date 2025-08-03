@@ -1,0 +1,43 @@
+name: Build C++ for ARM/ARM64
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: arm
+            compiler_prefix: arm-linux-gnueabihf
+            artifact_name: smarthome_pc_controller-arm
+          - arch: arm64
+            compiler_prefix: aarch64-linux-gnu
+            artifact_name: smarthome_pc_controller-arm64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++-arm-linux-gnueabihf g++-aarch64-linux-gnu
+
+      - name: Configure and Build for ${{ matrix.arch }}
+        run: |
+          cd SmartHomePCControl-CPP
+          mkdir -p build/${{ matrix.arch }}
+          cd build/${{ matrix.arch }}
+          cmake ../.. -DCMAKE_C_COMPILER=${{ matrix.compiler_prefix }}-gcc -DCMAKE_CXX_COMPILER=${{ matrix.compiler_prefix }}-g++
+          cmake --build .
+
+      - name: Upload Artifact for ${{ matrix.arch }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: SmartHomePCControl-CPP/build/${{ matrix.arch }}/smarthome_pc_controller
