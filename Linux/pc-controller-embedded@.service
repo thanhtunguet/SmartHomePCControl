@@ -4,6 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
+Environment="DEVICE_MAC=YOUR_MAC_ADDRESS_HERE"
+Environment="SERVER_IP=YOUR_SERVER_IP_HERE"
 ExecStart=/usr/local/bin/pc-controller-embedded %i
 Restart=always
 
