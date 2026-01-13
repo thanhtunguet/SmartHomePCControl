@@ -1,0 +1,27 @@
+[Unit]
+Description=SmartHome PC Controller (Rust)
+After=network.target
+
+[Service]
+Type=simple
+User=nobody
+Group=nogroup
+WorkingDirectory=/opt/smarthome-pc-controller
+Environment="DEVICE_MAC=00:00:00:00:00:00"
+Environment="SERVER_IP=127.0.0.1"
+Environment="HOME_API_KEY=your-secret-key-here"
+ExecStart=/usr/local/bin/smarthome-pc-controller 8080
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target
