@@ -1,3 +1,7 @@
+// Disable unnecessary features for minimal binary
+#define CPPHTTPLIB_NO_EXCEPTIONS
+#define CPPHTTPLIB_THREAD_POOL_COUNT 1
+
 #include <iostream>
 #include <string>
 #include <vector>
