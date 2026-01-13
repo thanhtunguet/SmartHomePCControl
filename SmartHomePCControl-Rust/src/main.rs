@@ -9,7 +9,6 @@ use axum::{
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
 use std::sync::Arc;
 use std::time::Duration;
-use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 
 // --- Configuration --- //
@@ -213,7 +212,7 @@ async fn is_online_handler(State(config): State<Arc<AppConfig>>) -> impl IntoRes
 
 // --- Main Application --- //
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     // Initialize tracing
     tracing_subscriber::fmt()
@@ -240,7 +239,6 @@ async fn main() {
             config.clone(),
             auth_middleware,
         ))
-        .layer(TraceLayer::new_for_http())
         .with_state(config);
 
     // Get port from command line arguments or use default
