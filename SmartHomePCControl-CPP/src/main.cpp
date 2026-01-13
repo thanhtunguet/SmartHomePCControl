@@ -3,6 +3,7 @@
 #include <string>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -46,6 +47,20 @@ struct HttpRequest {
     std::string auth_token;
 };
 
+// Case-insensitive strstr
+const char* strcasestr_custom(const char* haystack, const char* needle) {
+    if (!*needle) return haystack;
+    for (; *haystack; ++haystack) {
+        const char* h = haystack;
+        const char* n = needle;
+        while (*h && *n && (tolower((unsigned char)*h) == tolower((unsigned char)*n))) {
+            ++h; ++n;
+        }
+        if (!*n) return haystack;
+    }
+    return nullptr;
+}
+
 bool parse_request(const char* buffer, HttpRequest& req) {
     // Parse: "GET /path HTTP/1.1\r\n..."
     const char* space1 = strchr(buffer, ' ');
@@ -58,10 +73,10 @@ bool parse_request(const char* buffer, HttpRequest& req) {
     
     req.path = std::string(space1 + 1, space2 - space1 - 1);
     
-    // Parse Authorization header
-    const char* auth = strstr(buffer, "Authorization: Bearer ");
+    // Parse Authorization header (case-insensitive)
+    const char* auth = strcasestr_custom(buffer, "authorization: bearer ");
     if (auth) {
-        auth += 22; // Skip "Authorization: Bearer "
+        auth += 22; // Skip "authorization: bearer "
         const char* end = strstr(auth, "\r\n");
         if (end) {
             req.auth_token = std::string(auth, end - auth);
