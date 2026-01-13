@@ -15,8 +15,31 @@ const char* get_env(const char* name, const char* default_val) {
 
 const std::string DEVICE_MAC = get_env("DEVICE_MAC", "00:00:00:00:00:00");
 const std::string SERVER_IP = get_env("SERVER_IP", "127.0.0.1");
+const std::string HOME_API_KEY = get_env("HOME_API_KEY", "");
 const int SHUTDOWN_PORT = 10675;
 const int PROBE_PORT = 3389; // RDP port, a good indicator of being online
+
+// --- Authentication --- //
+
+bool is_authorized(const httplib::Request& req) {
+    if (HOME_API_KEY.empty()) {
+        std::cerr << "Warning: HOME_API_KEY is not set!" << std::endl;
+        return false;
+    }
+    
+    auto auth_header = req.get_header_value("Authorization");
+    if (auth_header.empty()) {
+        return false;
+    }
+    
+    const std::string bearer_prefix = "Bearer ";
+    if (auth_header.substr(0, bearer_prefix.length()) != bearer_prefix) {
+        return false;
+    }
+    
+    std::string token = auth_header.substr(bearer_prefix.length());
+    return token == HOME_API_KEY;
+}
 
 // --- Core Logic --- //
 
@@ -161,7 +184,14 @@ int main(int argc, char** argv) {
         std::cout << "Request: " << req.method << " " << req.path << " -> Response: " << res.status << std::endl;
     });
 
-    svr.Get("/turn-on", [](const httplib::Request&, httplib::Response& res) {
+    svr.Get("/turn-on", [](const httplib::Request& req, httplib::Response& res) {
+        if (!is_authorized(req)) {
+            res.status = 401;
+            res.set_content("Unauthorized: Invalid or missing API key.", "text/plain");
+            std::cerr << "Result: Unauthorized access attempt." << std::endl;
+            return;
+        }
+        
         std::cout << "Action: Attempting to send magic packet to " << DEVICE_MAC << std::endl;
         if (send_magic_packet(DEVICE_MAC)) {
             res.set_content("Magic packet sent.", "text/plain");
@@ -173,7 +203,14 @@ int main(int argc, char** argv) {
         }
     });
 
-    svr.Get("/turn-off", [](const httplib::Request&, httplib::Response& res) {
+    svr.Get("/turn-off", [](const httplib::Request& req, httplib::Response& res) {
+        if (!is_authorized(req)) {
+            res.status = 401;
+            res.set_content("Unauthorized: Invalid or missing API key.", "text/plain");
+            std::cerr << "Result: Unauthorized access attempt." << std::endl;
+            return;
+        }
+        
         std::cout << "Action: Attempting to send shutdown command to " << SERVER_IP << ":" << SHUTDOWN_PORT << std::endl;
         if (send_shutdown_command()) {
             res.set_content("Shutdown command sent.", "text/plain");
@@ -185,7 +222,14 @@ int main(int argc, char** argv) {
         }
     });
 
-    svr.Get("/is-online", [](const httplib::Request&, httplib::Response& res) {
+    svr.Get("/is-online", [](const httplib::Request& req, httplib::Response& res) {
+        if (!is_authorized(req)) {
+            res.status = 401;
+            res.set_content("Unauthorized: Invalid or missing API key.", "text/plain");
+            std::cerr << "Result: Unauthorized access attempt." << std::endl;
+            return;
+        }
+        
         std::cout << "Action: Checking online status for " << SERVER_IP << ":" << PROBE_PORT << std::endl;
         bool online = is_pc_online();
         res.set_content(online ? "true" : "false", "text/plain");
@@ -205,6 +249,7 @@ int main(int argc, char** argv) {
     std::cout << "Configuration:" << std::endl;
     std::cout << "  - DEVICE_MAC: " << DEVICE_MAC << std::endl;
     std::cout << "  - SERVER_IP:  " << SERVER_IP << std::endl;
+    std::cout << "  - HOME_API_KEY: " << (HOME_API_KEY.empty() ? "NOT SET" : "****") << std::endl;
     std::cout << "------------------------------" << std::endl;
     std::cout << "Starting server on port " << port << "..." << std::endl;
 

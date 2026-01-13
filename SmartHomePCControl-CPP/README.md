@@ -13,6 +13,7 @@ This project is configured using environment variables:
 
 - `DEVICE_MAC`: The MAC address of the PC you want to control.
 - `SERVER_IP`: The IP address of the PC you want to control.
+- `HOME_API_KEY`: Home API Key
 
 ## Building the Project
 
