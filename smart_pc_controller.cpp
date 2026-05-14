@@ -16,6 +16,7 @@
 #include <string>
 #include <atomic>
 #include <mutex>
+#include "resource.h"
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -27,11 +28,6 @@
 #define WM_TRAYICON (WM_USER + 1)
 #define ID_TRAY_EXIT 1001
 #define ID_TRAY_SETTINGS 1002
-#define IDC_PORT_EDIT 1003
-#define IDC_STARTUP_CHECK 1004
-#define IDC_OK_BUTTON 1005
-#define IDC_CANCEL_BUTTON 1006
-#define IDC_COMMAND_EDIT 1007
 #define DEFAULT_PORT 10675
 #define DEFAULT_SHUTDOWN_COMMAND "shutdown-my-pc"
 #define BUFFER_SIZE 1024
@@ -49,22 +45,15 @@ std::mutex g_shutdownCommandMutex;
 SOCKET g_udpSocket = INVALID_SOCKET;
 SOCKET g_tcpSocket = INVALID_SOCKET;
 HICON g_hTrayIcon = NULL;
-HFONT g_hUiFont = NULL;
-HFONT g_hTitleFont = NULL;
-HBRUSH g_hSettingsBackgroundBrush = NULL;
 
 // Function declarations
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-LRESULT CALLBACK SettingsWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK SettingsDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 void InitializeTrayIcon();
 void CleanupTrayIcon();
 void ShowContextMenu(HWND hwnd);
 void ShowSettingsDialog();
 HICON CreatePowerTrayIcon();
-HFONT GetUIFont(int pointSize, int weight = FW_NORMAL);
-HBRUSH GetSettingsBackgroundBrush();
-void SetControlFont(HWND hwnd, HFONT font);
 std::wstring Utf8ToWide(const std::string& text);
 std::string WideToUtf8(const std::wstring& text);
 std::string GetShutdownCommand();
@@ -206,18 +195,6 @@ void CleanupTrayIcon()
         DestroyIcon(g_hTrayIcon);
         g_hTrayIcon = NULL;
     }
-    if (g_hUiFont) {
-        DeleteObject(g_hUiFont);
-        g_hUiFont = NULL;
-    }
-    if (g_hTitleFont) {
-        DeleteObject(g_hTitleFont);
-        g_hTitleFont = NULL;
-    }
-    if (g_hSettingsBackgroundBrush) {
-        DeleteObject(g_hSettingsBackgroundBrush);
-        g_hSettingsBackgroundBrush = NULL;
-    }
 }
 
 // Show context menu for tray icon
@@ -236,110 +213,28 @@ void ShowContextMenu(HWND hwnd)
     DestroyMenu(hMenu);
 }
 
-// Settings window procedure
-LRESULT CALLBACK SettingsWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-    switch (uMsg) {
-    case WM_COMMAND:
-        switch (LOWORD(wParam)) {
-        case IDC_OK_BUTTON:
-            {
-                // Get port value
-                HWND hPortEdit = GetDlgItem(hwnd, IDC_PORT_EDIT);
-                WCHAR portText[10];
-                GetWindowText(hPortEdit, portText, 10);
-                int newPort = _wtoi(portText);
-
-                HWND hCommandEdit = GetDlgItem(hwnd, IDC_COMMAND_EDIT);
-                WCHAR commandText[256];
-                GetWindowText(hCommandEdit, commandText, 256);
-                std::string newCommand = WideToUtf8(commandText);
-                
-                if (newPort > 0 && newPort <= 65535) {
-                    if (newCommand.empty()) {
-                        MessageBox(hwnd, L"Please enter a shutdown message.", L"Invalid Message", MB_OK | MB_ICONWARNING);
-                        return 0;
-                    }
-
-                    if (newPort != g_port.load()) {
-                        g_port = newPort;
-                        CleanupSockets();
-                        InitializeSockets();
-                    }
-
-                    SetShutdownCommand(newCommand);
-                    
-                    // Handle startup setting
-                    HWND hStartupCheck = GetDlgItem(hwnd, IDC_STARTUP_CHECK);
-                    bool startupEnabled = SendMessage(hStartupCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
-                    SetStartupRegistry(startupEnabled);
-                    
-                    DestroyWindow(hwnd);
-                } else {
-                    MessageBox(hwnd, L"Please enter a valid port number (1-65535)", L"Invalid Port", MB_OK | MB_ICONWARNING);
-                }
-            }
-            return 0;
-
-        case IDC_CANCEL_BUTTON:
-            DestroyWindow(hwnd);
-            return 0;
-        }
-        break;
-
-    case WM_CLOSE:
-        DestroyWindow(hwnd);
-        return 0;
-
-    case WM_DESTROY:
-        EnableWindow(g_hMainWnd, TRUE);
-        SetForegroundWindow(g_hMainWnd);
-        return 0;
-
-    case WM_CTLCOLORSTATIC:
-    case WM_CTLCOLORBTN:
-        {
-            HDC hdc = (HDC)wParam;
-            SetBkColor(hdc, RGB(248, 249, 251));
-            SetTextColor(hdc, RGB(32, 39, 49));
-            return (LRESULT)GetSettingsBackgroundBrush();
-        }
-
-    default:
-        return DefWindowProc(hwnd, uMsg, wParam, lParam);
-    }
-    return 0;
-}
-
-// Settings dialog procedure (kept for compatibility, but not used)
+// Settings dialog procedure
 INT_PTR CALLBACK SettingsDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message) {
     case WM_INITDIALOG:
         {
-            // Set current port value
+            SendMessage(hDlg, WM_SETICON, ICON_SMALL, (LPARAM)g_hTrayIcon);
+            SendMessage(hDlg, WM_SETICON, ICON_BIG, (LPARAM)g_hTrayIcon);
             SetDlgItemInt(hDlg, IDC_PORT_EDIT, g_port.load(), FALSE);
             SetDlgItemText(hDlg, IDC_COMMAND_EDIT, Utf8ToWide(GetShutdownCommand()).c_str());
-            
-            // Set startup checkbox
             CheckDlgButton(hDlg, IDC_STARTUP_CHECK, IsStartupEnabled() ? BST_CHECKED : BST_UNCHECKED);
+            SendDlgItemMessage(hDlg, IDC_PORT_EDIT, EM_SETLIMITTEXT, 5, 0);
+            SendDlgItemMessage(hDlg, IDC_COMMAND_EDIT, EM_SETLIMITTEXT, 255, 0);
         }
         return TRUE;
 
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
-        case IDC_OK_BUTTON:
+        case IDOK:
             {
-                // Get new port value
                 UINT newPort = GetDlgItemInt(hDlg, IDC_PORT_EDIT, NULL, FALSE);
-                if (newPort > 0 && newPort <= 65535) {
-                    if (newPort != g_port.load()) {
-                        g_port = newPort;
-                        // Restart sockets with new port
-                        CleanupSockets();
-                        InitializeSockets();
-                    }
-                } else {
+                if (newPort == 0 || newPort > 65535) {
                     MessageBox(hDlg, L"Please enter a valid port number (1-65535)", L"Invalid Port", MB_OK | MB_ICONWARNING);
                     return TRUE;
                 }
@@ -353,7 +248,12 @@ INT_PTR CALLBACK SettingsDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
                 }
                 SetShutdownCommand(newCommand);
 
-                // Handle startup setting
+                if ((int)newPort != g_port.load()) {
+                    g_port = (int)newPort;
+                    CleanupSockets();
+                    InitializeSockets();
+                }
+
                 bool startupEnabled = IsDlgButtonChecked(hDlg, IDC_STARTUP_CHECK) == BST_CHECKED;
                 SetStartupRegistry(startupEnabled);
 
@@ -361,7 +261,7 @@ INT_PTR CALLBACK SettingsDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
             }
             return TRUE;
 
-        case IDC_CANCEL_BUTTON:
+        case IDCANCEL:
             EndDialog(hDlg, IDCANCEL);
             return TRUE;
         }
@@ -373,94 +273,7 @@ INT_PTR CALLBACK SettingsDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
 // Show settings dialog
 void ShowSettingsDialog()
 {
-    // Create a simple settings window instead of complex dialog template
-    WNDCLASSEX wcSettings = { 0 };
-    wcSettings.cbSize = sizeof(WNDCLASSEX);
-    wcSettings.lpfnWndProc = SettingsWindowProc;  // Use our custom window procedure
-    wcSettings.hInstance = g_hInst;
-    wcSettings.lpszClassName = L"SettingsWindowClass";
-    wcSettings.hIcon = g_hTrayIcon ? g_hTrayIcon : LoadIcon(NULL, IDI_APPLICATION);
-    wcSettings.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wcSettings.hbrBackground = GetSettingsBackgroundBrush();
-    
-    static bool classRegistered = false;
-    if (!classRegistered) {
-        RegisterClassEx(&wcSettings);
-        classRegistered = true;
-    }
-    
-    // Create settings window
-    HWND hSettingsWnd = CreateWindowEx(
-        WS_EX_DLGMODALFRAME,
-        L"SettingsWindowClass",
-        L"Smart PC Controller Settings",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 430, 280,
-        g_hMainWnd, NULL, g_hInst, NULL);
-    
-    if (hSettingsWnd) {
-        // Disable main window to make this modal
-        EnableWindow(g_hMainWnd, FALSE);
-
-        HFONT uiFont = GetUIFont(9);
-        HFONT titleFont = GetUIFont(13, FW_SEMIBOLD);
-        
-        // Create controls
-        HWND hTitle = CreateWindow(L"STATIC", L"Smart PC Controller", WS_VISIBLE | WS_CHILD,
-            24, 20, 250, 24, hSettingsWnd, NULL, g_hInst, NULL);
-        SetControlFont(hTitle, titleFont);
-
-        HWND hSubtitle = CreateWindow(L"STATIC", L"Network shutdown listener", WS_VISIBLE | WS_CHILD,
-            24, 45, 250, 18, hSettingsWnd, NULL, g_hInst, NULL);
-        SetControlFont(hSubtitle, uiFont);
-
-        HWND hPortLabel = CreateWindow(L"STATIC", L"Port", WS_VISIBLE | WS_CHILD,
-            24, 84, 120, 20, hSettingsWnd, NULL, g_hInst, NULL);
-        SetControlFont(hPortLabel, uiFont);
-        
-        HWND hPortEdit = CreateWindowEx(WS_EX_CLIENTEDGE, L"EDIT", NULL,
-            WS_VISIBLE | WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL,
-            155, 80, 230, 26, hSettingsWnd, (HMENU)IDC_PORT_EDIT, g_hInst, NULL);
-        SetControlFont(hPortEdit, uiFont);
-        SendMessage(hPortEdit, EM_SETLIMITTEXT, 5, 0);
-
-        HWND hCommandLabel = CreateWindow(L"STATIC", L"Shutdown message", WS_VISIBLE | WS_CHILD,
-            24, 122, 120, 20, hSettingsWnd, NULL, g_hInst, NULL);
-        SetControlFont(hCommandLabel, uiFont);
-
-        HWND hCommandEdit = CreateWindowEx(WS_EX_CLIENTEDGE, L"EDIT", NULL,
-            WS_VISIBLE | WS_CHILD | ES_AUTOHSCROLL,
-            155, 118, 230, 26, hSettingsWnd, (HMENU)IDC_COMMAND_EDIT, g_hInst, NULL);
-        SetControlFont(hCommandEdit, uiFont);
-        SendMessage(hCommandEdit, EM_SETLIMITTEXT, 255, 0);
-        
-        HWND hStartupCheck = CreateWindow(L"BUTTON", L"Run at startup", WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
-            155, 158, 160, 22, hSettingsWnd, (HMENU)IDC_STARTUP_CHECK, g_hInst, NULL);
-        SetControlFont(hStartupCheck, uiFont);
-        
-        HWND hOkButton = CreateWindow(L"BUTTON", L"Save", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-            235, 205, 70, 30, hSettingsWnd, (HMENU)IDC_OK_BUTTON, g_hInst, NULL);
-        SetControlFont(hOkButton, uiFont);
-        
-        HWND hCancelButton = CreateWindow(L"BUTTON", L"Cancel", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-            315, 205, 70, 30, hSettingsWnd, (HMENU)IDC_CANCEL_BUTTON, g_hInst, NULL);
-        SetControlFont(hCancelButton, uiFont);
-
-        // Initialize values
-        SetWindowText(hPortEdit, std::to_wstring(g_port.load()).c_str());
-        SetWindowText(hCommandEdit, Utf8ToWide(GetShutdownCommand()).c_str());
-        SendMessage(hStartupCheck, BM_SETCHECK, IsStartupEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
-        
-        // Center the window
-        RECT rc;
-        GetWindowRect(hSettingsWnd, &rc);
-        int x = (GetSystemMetrics(SM_CXSCREEN) - (rc.right - rc.left)) / 2;
-        int y = (GetSystemMetrics(SM_CYSCREEN) - (rc.bottom - rc.top)) / 2;
-        SetWindowPos(hSettingsWnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-        
-        // Set focus to the port edit box
-        SetFocus(hPortEdit);
-    }
+    DialogBox(g_hInst, MAKEINTRESOURCE(IDD_SETTINGS_DIALOG), g_hMainWnd, SettingsDialogProc);
 }
 
 HICON CreatePowerTrayIcon()
@@ -515,35 +328,6 @@ HICON CreatePowerTrayIcon()
     ReleaseDC(NULL, screenDc);
 
     return icon;
-}
-
-HFONT GetUIFont(int pointSize, int weight)
-{
-    HFONT* target = weight == FW_NORMAL ? &g_hUiFont : &g_hTitleFont;
-    if (*target) {
-        return *target;
-    }
-
-    HDC hdc = GetDC(NULL);
-    int height = -MulDiv(pointSize, GetDeviceCaps(hdc, LOGPIXELSY), 72);
-    ReleaseDC(NULL, hdc);
-
-    *target = CreateFont(height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    return *target;
-}
-
-HBRUSH GetSettingsBackgroundBrush()
-{
-    if (!g_hSettingsBackgroundBrush) {
-        g_hSettingsBackgroundBrush = CreateSolidBrush(RGB(248, 249, 251));
-    }
-    return g_hSettingsBackgroundBrush;
-}
-
-void SetControlFont(HWND hwnd, HFONT font)
-{
-    SendMessage(hwnd, WM_SETFONT, (WPARAM)font, TRUE);
 }
 
 std::wstring Utf8ToWide(const std::string& text)

@@ -1,0 +1,6 @@
+#pragma once
+
+#define IDD_SETTINGS_DIALOG 101
+#define IDC_PORT_EDIT 1003
+#define IDC_STARTUP_CHECK 1004
+#define IDC_COMMAND_EDIT 1007

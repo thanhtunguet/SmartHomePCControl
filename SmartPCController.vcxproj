@@ -113,6 +113,12 @@
     <ClCompile Include="smart_pc_controller.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ResourceCompile Include="SmartPCController.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="resource.h" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="README.md" />
     <None Include="build.bat" />
     <None Include="CLAUDE.md" />
