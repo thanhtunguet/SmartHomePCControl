@@ -8,6 +8,7 @@ A lightweight Windows native application that allows remote shutdown of your PC 
 - **Dual Protocol Support**: Listens on both UDP and TCP sockets simultaneously
 - **System Tray Integration**: Runs silently in the background with a system tray icon
 - **Configurable Port**: Change the listening port through an easy-to-use settings dialog
+- **Configurable Shutdown Message**: Change the command message used to trigger shutdown
 - **Auto-Start Option**: Configure the application to run automatically at Windows startup
 - **Lightweight**: Uses less than 10 MB of RAM when idle
 - **Single Executable**: No dependencies, just one standalone .exe file
@@ -42,11 +43,12 @@ Right-click the tray icon to access:
 
 Click "Settings" from the tray menu to:
 - **Change Port**: Set a custom listening port (1-65535)
+- **Shutdown Message**: Set a custom command message (defaults to `shutdown-my-pc`)
 - **Run at Startup**: Enable/disable automatic startup with Windows
 
 ### Remote Shutdown Command
 
-To shutdown the PC remotely, send the exact string:
+To shutdown the PC remotely, send the configured shutdown message. The default is:
 ```
 shutdown-my-pc
 ```
@@ -91,7 +93,18 @@ sock.close()
 - Microsoft Visual Studio 2019 or later
 - Windows SDK
 
-### Compilation
+### Visual Studio
+
+1. Open `SmartPCController.sln` in Visual Studio 2022 or later
+2. Select `Debug` or `Release`, and `x64` or `Win32`
+3. Press `F5` to build and run, or `Ctrl+F5` to run without debugging
+
+Build outputs are written to:
+```
+bin\<Platform>\<Configuration>\SmartPCController.exe
+```
+
+### Command Line Compilation
 
 1. Open Visual Studio Developer Command Prompt
 2. Navigate to the project directory
@@ -123,6 +136,7 @@ Or open the project in Visual Studio and build normally.
 - **Buffer Size**: 1024 bytes
 - **Socket Timeout**: 1 second
 - **Registry Key**: `HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
+- **Default Shutdown Message**: `shutdown-my-pc`
 
 ### Security Considerations
 

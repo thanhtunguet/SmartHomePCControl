@@ -1,6 +1,12 @@
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef UNICODE
 #define UNICODE
+#endif
+#ifndef _UNICODE
 #define _UNICODE
+#endif
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -9,6 +15,7 @@
 #include <thread>
 #include <string>
 #include <atomic>
+#include <mutex>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -24,7 +31,9 @@
 #define IDC_STARTUP_CHECK 1004
 #define IDC_OK_BUTTON 1005
 #define IDC_CANCEL_BUTTON 1006
+#define IDC_COMMAND_EDIT 1007
 #define DEFAULT_PORT 10675
+#define DEFAULT_SHUTDOWN_COMMAND "shutdown-my-pc"
 #define BUFFER_SIZE 1024
 #define REGISTRY_KEY "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
 #define APP_NAME "SmartPCController"
@@ -35,8 +44,14 @@ HWND g_hMainWnd;
 NOTIFYICONDATA g_nid;
 std::atomic<bool> g_running(true);
 std::atomic<int> g_port(DEFAULT_PORT);
+std::string g_shutdownCommand(DEFAULT_SHUTDOWN_COMMAND);
+std::mutex g_shutdownCommandMutex;
 SOCKET g_udpSocket = INVALID_SOCKET;
 SOCKET g_tcpSocket = INVALID_SOCKET;
+HICON g_hTrayIcon = NULL;
+HFONT g_hUiFont = NULL;
+HFONT g_hTitleFont = NULL;
+HBRUSH g_hSettingsBackgroundBrush = NULL;
 
 // Function declarations
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -46,6 +61,14 @@ void InitializeTrayIcon();
 void CleanupTrayIcon();
 void ShowContextMenu(HWND hwnd);
 void ShowSettingsDialog();
+HICON CreatePowerTrayIcon();
+HFONT GetUIFont(int pointSize, int weight = FW_NORMAL);
+HBRUSH GetSettingsBackgroundBrush();
+void SetControlFont(HWND hwnd, HFONT font);
+std::wstring Utf8ToWide(const std::string& text);
+std::string WideToUtf8(const std::wstring& text);
+std::string GetShutdownCommand();
+void SetShutdownCommand(const std::string& command);
 bool SetStartupRegistry(bool enable);
 bool IsStartupEnabled();
 void InitializeSockets();
@@ -168,7 +191,8 @@ void InitializeTrayIcon()
     g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
-    g_nid.hIcon = LoadIcon(NULL, IDI_WINLOGO);
+    g_hTrayIcon = CreatePowerTrayIcon();
+    g_nid.hIcon = g_hTrayIcon ? g_hTrayIcon : LoadIcon(NULL, IDI_APPLICATION);
     wcscpy_s(g_nid.szTip, sizeof(g_nid.szTip)/sizeof(g_nid.szTip[0]), L"Smart PC Controller");
 
     Shell_NotifyIcon(NIM_ADD, &g_nid);
@@ -178,6 +202,22 @@ void InitializeTrayIcon()
 void CleanupTrayIcon()
 {
     Shell_NotifyIcon(NIM_DELETE, &g_nid);
+    if (g_hTrayIcon) {
+        DestroyIcon(g_hTrayIcon);
+        g_hTrayIcon = NULL;
+    }
+    if (g_hUiFont) {
+        DeleteObject(g_hUiFont);
+        g_hUiFont = NULL;
+    }
+    if (g_hTitleFont) {
+        DeleteObject(g_hTitleFont);
+        g_hTitleFont = NULL;
+    }
+    if (g_hSettingsBackgroundBrush) {
+        DeleteObject(g_hSettingsBackgroundBrush);
+        g_hSettingsBackgroundBrush = NULL;
+    }
 }
 
 // Show context menu for tray icon
@@ -209,13 +249,25 @@ LRESULT CALLBACK SettingsWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
                 WCHAR portText[10];
                 GetWindowText(hPortEdit, portText, 10);
                 int newPort = _wtoi(portText);
+
+                HWND hCommandEdit = GetDlgItem(hwnd, IDC_COMMAND_EDIT);
+                WCHAR commandText[256];
+                GetWindowText(hCommandEdit, commandText, 256);
+                std::string newCommand = WideToUtf8(commandText);
                 
                 if (newPort > 0 && newPort <= 65535) {
+                    if (newCommand.empty()) {
+                        MessageBox(hwnd, L"Please enter a shutdown message.", L"Invalid Message", MB_OK | MB_ICONWARNING);
+                        return 0;
+                    }
+
                     if (newPort != g_port.load()) {
                         g_port = newPort;
                         CleanupSockets();
                         InitializeSockets();
                     }
+
+                    SetShutdownCommand(newCommand);
                     
                     // Handle startup setting
                     HWND hStartupCheck = GetDlgItem(hwnd, IDC_STARTUP_CHECK);
@@ -244,6 +296,15 @@ LRESULT CALLBACK SettingsWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM 
         SetForegroundWindow(g_hMainWnd);
         return 0;
 
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN:
+        {
+            HDC hdc = (HDC)wParam;
+            SetBkColor(hdc, RGB(248, 249, 251));
+            SetTextColor(hdc, RGB(32, 39, 49));
+            return (LRESULT)GetSettingsBackgroundBrush();
+        }
+
     default:
         return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
@@ -258,6 +319,7 @@ INT_PTR CALLBACK SettingsDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
         {
             // Set current port value
             SetDlgItemInt(hDlg, IDC_PORT_EDIT, g_port.load(), FALSE);
+            SetDlgItemText(hDlg, IDC_COMMAND_EDIT, Utf8ToWide(GetShutdownCommand()).c_str());
             
             // Set startup checkbox
             CheckDlgButton(hDlg, IDC_STARTUP_CHECK, IsStartupEnabled() ? BST_CHECKED : BST_UNCHECKED);
@@ -281,6 +343,15 @@ INT_PTR CALLBACK SettingsDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
                     MessageBox(hDlg, L"Please enter a valid port number (1-65535)", L"Invalid Port", MB_OK | MB_ICONWARNING);
                     return TRUE;
                 }
+
+                WCHAR commandText[256];
+                GetDlgItemText(hDlg, IDC_COMMAND_EDIT, commandText, 256);
+                std::string newCommand = WideToUtf8(commandText);
+                if (newCommand.empty()) {
+                    MessageBox(hDlg, L"Please enter a shutdown message.", L"Invalid Message", MB_OK | MB_ICONWARNING);
+                    return TRUE;
+                }
+                SetShutdownCommand(newCommand);
 
                 // Handle startup setting
                 bool startupEnabled = IsDlgButtonChecked(hDlg, IDC_STARTUP_CHECK) == BST_CHECKED;
@@ -308,9 +379,9 @@ void ShowSettingsDialog()
     wcSettings.lpfnWndProc = SettingsWindowProc;  // Use our custom window procedure
     wcSettings.hInstance = g_hInst;
     wcSettings.lpszClassName = L"SettingsWindowClass";
-    wcSettings.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    wcSettings.hIcon = g_hTrayIcon ? g_hTrayIcon : LoadIcon(NULL, IDI_APPLICATION);
     wcSettings.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wcSettings.hbrBackground = (HBRUSH)(COLOR_3DFACE + 1);
+    wcSettings.hbrBackground = GetSettingsBackgroundBrush();
     
     static bool classRegistered = false;
     if (!classRegistered) {
@@ -322,33 +393,62 @@ void ShowSettingsDialog()
     HWND hSettingsWnd = CreateWindowEx(
         WS_EX_DLGMODALFRAME,
         L"SettingsWindowClass",
-        L"Settings",
+        L"Smart PC Controller Settings",
         WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 250, 150,
+        CW_USEDEFAULT, CW_USEDEFAULT, 430, 280,
         g_hMainWnd, NULL, g_hInst, NULL);
     
     if (hSettingsWnd) {
         // Disable main window to make this modal
         EnableWindow(g_hMainWnd, FALSE);
+
+        HFONT uiFont = GetUIFont(9);
+        HFONT titleFont = GetUIFont(13, FW_SEMIBOLD);
         
         // Create controls
-        CreateWindow(L"STATIC", L"Port:", WS_VISIBLE | WS_CHILD,
-            10, 15, 40, 20, hSettingsWnd, NULL, g_hInst, NULL);
+        HWND hTitle = CreateWindow(L"STATIC", L"Smart PC Controller", WS_VISIBLE | WS_CHILD,
+            24, 20, 250, 24, hSettingsWnd, NULL, g_hInst, NULL);
+        SetControlFont(hTitle, titleFont);
+
+        HWND hSubtitle = CreateWindow(L"STATIC", L"Network shutdown listener", WS_VISIBLE | WS_CHILD,
+            24, 45, 250, 18, hSettingsWnd, NULL, g_hInst, NULL);
+        SetControlFont(hSubtitle, uiFont);
+
+        HWND hPortLabel = CreateWindow(L"STATIC", L"Port", WS_VISIBLE | WS_CHILD,
+            24, 84, 120, 20, hSettingsWnd, NULL, g_hInst, NULL);
+        SetControlFont(hPortLabel, uiFont);
         
-        HWND hPortEdit = CreateWindow(L"EDIT", NULL, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER,
-            60, 15, 80, 20, hSettingsWnd, (HMENU)IDC_PORT_EDIT, g_hInst, NULL);
+        HWND hPortEdit = CreateWindowEx(WS_EX_CLIENTEDGE, L"EDIT", NULL,
+            WS_VISIBLE | WS_CHILD | ES_NUMBER | ES_AUTOHSCROLL,
+            155, 80, 230, 26, hSettingsWnd, (HMENU)IDC_PORT_EDIT, g_hInst, NULL);
+        SetControlFont(hPortEdit, uiFont);
+        SendMessage(hPortEdit, EM_SETLIMITTEXT, 5, 0);
+
+        HWND hCommandLabel = CreateWindow(L"STATIC", L"Shutdown message", WS_VISIBLE | WS_CHILD,
+            24, 122, 120, 20, hSettingsWnd, NULL, g_hInst, NULL);
+        SetControlFont(hCommandLabel, uiFont);
+
+        HWND hCommandEdit = CreateWindowEx(WS_EX_CLIENTEDGE, L"EDIT", NULL,
+            WS_VISIBLE | WS_CHILD | ES_AUTOHSCROLL,
+            155, 118, 230, 26, hSettingsWnd, (HMENU)IDC_COMMAND_EDIT, g_hInst, NULL);
+        SetControlFont(hCommandEdit, uiFont);
+        SendMessage(hCommandEdit, EM_SETLIMITTEXT, 255, 0);
         
         HWND hStartupCheck = CreateWindow(L"BUTTON", L"Run at startup", WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
-            10, 45, 120, 20, hSettingsWnd, (HMENU)IDC_STARTUP_CHECK, g_hInst, NULL);
+            155, 158, 160, 22, hSettingsWnd, (HMENU)IDC_STARTUP_CHECK, g_hInst, NULL);
+        SetControlFont(hStartupCheck, uiFont);
         
-        CreateWindow(L"BUTTON", L"OK", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-            50, 85, 50, 25, hSettingsWnd, (HMENU)IDC_OK_BUTTON, g_hInst, NULL);
+        HWND hOkButton = CreateWindow(L"BUTTON", L"Save", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+            235, 205, 70, 30, hSettingsWnd, (HMENU)IDC_OK_BUTTON, g_hInst, NULL);
+        SetControlFont(hOkButton, uiFont);
         
-        CreateWindow(L"BUTTON", L"Cancel", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-            110, 85, 50, 25, hSettingsWnd, (HMENU)IDC_CANCEL_BUTTON, g_hInst, NULL);
+        HWND hCancelButton = CreateWindow(L"BUTTON", L"Cancel", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+            315, 205, 70, 30, hSettingsWnd, (HMENU)IDC_CANCEL_BUTTON, g_hInst, NULL);
+        SetControlFont(hCancelButton, uiFont);
 
         // Initialize values
         SetWindowText(hPortEdit, std::to_wstring(g_port.load()).c_str());
+        SetWindowText(hCommandEdit, Utf8ToWide(GetShutdownCommand()).c_str());
         SendMessage(hStartupCheck, BM_SETCHECK, IsStartupEnabled() ? BST_CHECKED : BST_UNCHECKED, 0);
         
         // Center the window
@@ -361,6 +461,125 @@ void ShowSettingsDialog()
         // Set focus to the port edit box
         SetFocus(hPortEdit);
     }
+}
+
+HICON CreatePowerTrayIcon()
+{
+    const int size = 32;
+    HDC screenDc = GetDC(NULL);
+    HDC memDc = CreateCompatibleDC(screenDc);
+    HBITMAP colorBitmap = CreateCompatibleBitmap(screenDc, size, size);
+    HBITMAP oldBitmap = (HBITMAP)SelectObject(memDc, colorBitmap);
+
+    HBRUSH bgBrush = CreateSolidBrush(RGB(0, 120, 212));
+    HPEN whitePen = CreatePen(PS_SOLID, 4, RGB(255, 255, 255));
+    HPEN oldPen = (HPEN)SelectObject(memDc, whitePen);
+    HBRUSH oldBrush = (HBRUSH)SelectObject(memDc, bgBrush);
+
+    RECT rc = { 0, 0, size, size };
+    FillRect(memDc, &rc, bgBrush);
+    SelectObject(memDc, bgBrush);
+    Ellipse(memDc, 2, 2, 30, 30);
+
+    SelectObject(memDc, GetStockObject(NULL_BRUSH));
+    Arc(memDc, 8, 8, 24, 25, 22, 10, 10, 10);
+    MoveToEx(memDc, 16, 7, NULL);
+    LineTo(memDc, 16, 17);
+
+    SelectObject(memDc, oldBrush);
+    SelectObject(memDc, oldPen);
+    SelectObject(memDc, oldBitmap);
+
+    HDC maskDc = CreateCompatibleDC(NULL);
+    HBITMAP maskBitmap = CreateBitmap(size, size, 1, 1, NULL);
+    HBITMAP oldMaskBitmap = (HBITMAP)SelectObject(maskDc, maskBitmap);
+    HBRUSH transparentBrush = (HBRUSH)GetStockObject(WHITE_BRUSH);
+    HBRUSH opaqueBrush = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    FillRect(maskDc, &rc, transparentBrush);
+    SelectObject(maskDc, opaqueBrush);
+    Ellipse(maskDc, 2, 2, 30, 30);
+    SelectObject(maskDc, oldMaskBitmap);
+
+    ICONINFO iconInfo = { 0 };
+    iconInfo.fIcon = TRUE;
+    iconInfo.hbmColor = colorBitmap;
+    iconInfo.hbmMask = maskBitmap;
+    HICON icon = CreateIconIndirect(&iconInfo);
+
+    DeleteObject(maskBitmap);
+    DeleteDC(maskDc);
+    DeleteObject(colorBitmap);
+    DeleteObject(bgBrush);
+    DeleteObject(whitePen);
+    DeleteDC(memDc);
+    ReleaseDC(NULL, screenDc);
+
+    return icon;
+}
+
+HFONT GetUIFont(int pointSize, int weight)
+{
+    HFONT* target = weight == FW_NORMAL ? &g_hUiFont : &g_hTitleFont;
+    if (*target) {
+        return *target;
+    }
+
+    HDC hdc = GetDC(NULL);
+    int height = -MulDiv(pointSize, GetDeviceCaps(hdc, LOGPIXELSY), 72);
+    ReleaseDC(NULL, hdc);
+
+    *target = CreateFont(height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    return *target;
+}
+
+HBRUSH GetSettingsBackgroundBrush()
+{
+    if (!g_hSettingsBackgroundBrush) {
+        g_hSettingsBackgroundBrush = CreateSolidBrush(RGB(248, 249, 251));
+    }
+    return g_hSettingsBackgroundBrush;
+}
+
+void SetControlFont(HWND hwnd, HFONT font)
+{
+    SendMessage(hwnd, WM_SETFONT, (WPARAM)font, TRUE);
+}
+
+std::wstring Utf8ToWide(const std::string& text)
+{
+    if (text.empty()) {
+        return L"";
+    }
+
+    int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), NULL, 0);
+    std::wstring result(sizeNeeded, 0);
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), &result[0], sizeNeeded);
+    return result;
+}
+
+std::string WideToUtf8(const std::wstring& text)
+{
+    if (text.empty()) {
+        return "";
+    }
+
+    int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), NULL, 0, NULL, NULL);
+    std::string result(sizeNeeded, 0);
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), &result[0], sizeNeeded, NULL, NULL);
+    return result;
+}
+
+std::string GetShutdownCommand()
+{
+    std::lock_guard<std::mutex> lock(g_shutdownCommandMutex);
+    return g_shutdownCommand;
+}
+
+void SetShutdownCommand(const std::string& command)
+{
+    std::lock_guard<std::mutex> lock(g_shutdownCommandMutex);
+    g_shutdownCommand = command;
 }
 
 // Set startup registry entry
@@ -378,8 +597,9 @@ bool SetStartupRegistry(bool enable)
         WCHAR exePath[MAX_PATH];
         GetModuleFileName(NULL, exePath, MAX_PATH);
         
+        DWORD dataSize = (DWORD)((wcslen(exePath) + 1) * sizeof(WCHAR));
         result = RegSetValueEx(hKey, L"SmartPCController", 0, REG_SZ,
-            (LPBYTE)exePath, (wcslen(exePath) + 1) * sizeof(WCHAR));
+            (LPBYTE)exePath, dataSize);
     } else {
         result = RegDeleteValue(hKey, L"SmartPCController");
         if (result == ERROR_FILE_NOT_FOUND) {
@@ -512,16 +732,12 @@ void TcpListenerThread()
 // Process received data to check for shutdown command
 bool ProcessReceivedData(const char* data, int length)
 {
-    const char* shutdownCommand = "shutdown-my-pc";
-    int commandLength = strlen(shutdownCommand);
+    std::string shutdownCommand = GetShutdownCommand();
+    int commandLength = (int)shutdownCommand.length();
     
-    if (length >= commandLength) {
-        // Check if the received data contains the exact shutdown command
-        for (int i = 0; i <= length - commandLength; i++) {
-            if (strncmp(data + i, shutdownCommand, commandLength) == 0) {
-                return true;
-            }
-        }
+    if (commandLength > 0 && length >= commandLength) {
+        std::string receivedData(data, length);
+        return receivedData.find(shutdownCommand) != std::string::npos;
     }
     
     return false;
