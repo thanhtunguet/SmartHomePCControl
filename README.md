@@ -7,6 +7,7 @@ A lightweight Windows native application that allows remote shutdown of your PC 
 - **Remote Shutdown**: Shutdown your PC by sending a simple command over the network
 - **Dual Protocol Support**: Listens on both UDP and TCP sockets simultaneously
 - **System Tray Integration**: Runs silently in the background with a system tray icon
+- **Single Instance Guard**: Prevents duplicate app instances from running at the same time
 - **Configurable Port**: Change the listening port through an easy-to-use settings dialog
 - **Configurable Shutdown Message**: Change the command message used to trigger shutdown
 - **Auto-Start Option**: Configure the application to run automatically at Windows startup

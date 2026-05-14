@@ -33,6 +33,7 @@
 #define BUFFER_SIZE 1024
 #define REGISTRY_KEY "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
 #define APP_NAME "SmartPCController"
+#define SINGLE_INSTANCE_MUTEX_NAME L"Local\\SmartPCController.SingleInstance"
 
 // Global variables
 HINSTANCE g_hInst;
@@ -45,6 +46,7 @@ std::mutex g_shutdownCommandMutex;
 SOCKET g_udpSocket = INVALID_SOCKET;
 SOCKET g_tcpSocket = INVALID_SOCKET;
 HICON g_hTrayIcon = NULL;
+HANDLE g_hInstanceMutex = NULL;
 
 // Function declarations
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -54,6 +56,8 @@ void CleanupTrayIcon();
 void ShowContextMenu(HWND hwnd);
 void ShowSettingsDialog();
 HICON CreatePowerTrayIcon();
+bool InitializeSingleInstance();
+void CleanupSingleInstance();
 std::wstring Utf8ToWide(const std::string& text);
 std::string WideToUtf8(const std::wstring& text);
 std::string GetShutdownCommand();
@@ -71,11 +75,16 @@ bool ProcessReceivedData(const char* data, int length);
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
     g_hInst = hInstance;
+
+    if (!InitializeSingleInstance()) {
+        return 0;
+    }
     
     // Initialize Winsock
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         MessageBox(NULL, L"Failed to initialize Winsock", L"Error", MB_OK | MB_ICONERROR);
+        CleanupSingleInstance();
         return 1;
     }
 
@@ -92,6 +101,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if (!RegisterClassEx(&wc)) {
         MessageBox(NULL, L"Failed to register window class", L"Error", MB_OK | MB_ICONERROR);
         WSACleanup();
+        CleanupSingleInstance();
         return 1;
     }
 
@@ -103,6 +113,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if (!g_hMainWnd) {
         MessageBox(NULL, L"Failed to create window", L"Error", MB_OK | MB_ICONERROR);
         WSACleanup();
+        CleanupSingleInstance();
         return 1;
     }
 
@@ -128,6 +139,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if (tcpThread.joinable()) tcpThread.join();
     CleanupTrayIcon();
     WSACleanup();
+    CleanupSingleInstance();
 
     return (int)msg.wParam;
 }
@@ -328,6 +340,32 @@ HICON CreatePowerTrayIcon()
     ReleaseDC(NULL, screenDc);
 
     return icon;
+}
+
+bool InitializeSingleInstance()
+{
+    g_hInstanceMutex = CreateMutex(NULL, TRUE, SINGLE_INSTANCE_MUTEX_NAME);
+    if (!g_hInstanceMutex) {
+        MessageBox(NULL, L"Failed to initialize single-instance guard.", L"Error", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(g_hInstanceMutex);
+        g_hInstanceMutex = NULL;
+        return false;
+    }
+
+    return true;
+}
+
+void CleanupSingleInstance()
+{
+    if (g_hInstanceMutex) {
+        ReleaseMutex(g_hInstanceMutex);
+        CloseHandle(g_hInstanceMutex);
+        g_hInstanceMutex = NULL;
+    }
 }
 
 std::wstring Utf8ToWide(const std::string& text)
