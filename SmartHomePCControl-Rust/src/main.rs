@@ -24,7 +24,9 @@ impl AppConfig {
     fn from_env() -> Self {
         let device_mac = std::env::var("DEVICE_MAC").unwrap_or_else(|_| "00:00:00:00:00:00".to_string());
         let server_ip = std::env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
-        let web_api_key = std::env::var("WEB_API_KEY").unwrap_or_default();
+        let web_api_key = std::env::var("WEB_API_KEY")
+            .or_else(|_| std::env::var("HOME_API_KEY"))
+            .unwrap_or_default();
         
         Self {
             device_mac,

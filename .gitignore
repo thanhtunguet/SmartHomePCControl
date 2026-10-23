@@ -1,9 +1,18 @@
-.idea/
-bin/
-obj/
-.DS_Store
-Folder.DotSettings.user
-TestResults/
-build/
-publish/
+# Environment variables
 .env
+
+# OS & IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Build directories & artifacts
+build/
+target/
+*.exe
+*.o
+*.obj
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+

@@ -1,19 +1,18 @@
-### Build the project
+### Build the Rust project
 ```sh
-dotnet build
+cd SmartHomePCControl-Rust
+cargo build --release
 ```
 
-### Run the tests
+### Build the C++ project
 ```sh
-dotnet test
-```
-
-### Run the application
-```sh
-dotnet run --project SmartHomePCControl/SmartHomePCControl.csproj
+cd SmartHomePCControl-CPP
+mkdir -p build && cd build
+cmake ..
+cmake --build .
 ```
 
 ### Run with Docker
 ```sh
-docker-compose up
+docker compose up -d
 ```

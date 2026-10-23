@@ -1,1 +1,1 @@
-This project is a .NET application that allows controlling a home PC using Google Smart Home assistant.
+This project provides lightweight implementations (Rust, C++) to control a home PC (Wake-on-LAN, remote shutdown, online status detection) via Web APIs.

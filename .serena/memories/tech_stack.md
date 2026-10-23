@@ -1,4 +1,4 @@
-- .NET 7.0
-- ASP.NET Core
+- Rust (Axum, Tokio)
+- C++ (cpp-httplib)
 - Docker
-- MSTest for testing
+- CMake
