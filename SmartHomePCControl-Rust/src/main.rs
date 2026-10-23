@@ -17,19 +17,19 @@ use tracing::{error, info, warn};
 struct AppConfig {
     device_mac: String,
     server_ip: String,
-    home_api_key: String,
+    web_api_key: String,
 }
 
 impl AppConfig {
     fn from_env() -> Self {
         let device_mac = std::env::var("DEVICE_MAC").unwrap_or_else(|_| "00:00:00:00:00:00".to_string());
         let server_ip = std::env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
-        let home_api_key = std::env::var("HOME_API_KEY").unwrap_or_default();
+        let web_api_key = std::env::var("WEB_API_KEY").unwrap_or_default();
         
         Self {
             device_mac,
             server_ip,
-            home_api_key,
+            web_api_key,
         }
     }
 }
@@ -41,8 +41,8 @@ async fn auth_middleware(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    if config.home_api_key.is_empty() {
-        warn!("HOME_API_KEY is not set!");
+    if config.web_api_key.is_empty() {
+        warn!("WEB_API_KEY is not set!");
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -52,13 +52,20 @@ async fn auth_middleware(
         .and_then(|v| v.to_str().ok());
 
     match auth_header {
-        Some(value) if value.starts_with("Bearer ") => {
-            let token = &value[7..];
-            if token == config.home_api_key {
-                Ok(next.run(request).await)
-            } else {
-                error!("Invalid API key provided");
-                Err(StatusCode::UNAUTHORIZED)
+        Some(value) => {
+            let token = value
+                .strip_prefix("Bearer ")
+                .or_else(|| value.strip_prefix("bearer "));
+            match token {
+                Some(token) if token.trim() == config.web_api_key => Ok(next.run(request).await),
+                Some(_) => {
+                    error!("Invalid API key provided");
+                    Err(StatusCode::UNAUTHORIZED)
+                }
+                None => {
+                    error!("Missing Bearer scheme in Authorization header");
+                    Err(StatusCode::UNAUTHORIZED)
+                }
             }
         }
         _ => {
@@ -227,14 +234,14 @@ async fn main() {
     println!("Configuration:");
     println!("  - DEVICE_MAC: {}", config.device_mac);
     println!("  - SERVER_IP:  {}", config.server_ip);
-    println!("  - HOME_API_KEY: {}", if config.home_api_key.is_empty() { "NOT SET" } else { "****" });
+    println!("  - WEB_API_KEY: {}", if config.web_api_key.is_empty() { "NOT SET" } else { "****" });
     println!("------------------------------");
 
     // Build the application routes
     let app = Router::new()
-        .route("/turn-on", get(turn_on_handler))
-        .route("/turn-off", get(turn_off_handler))
-        .route("/is-online", get(is_online_handler))
+        .route("/api/turn-on", get(turn_on_handler))
+        .route("/api/turn-off", get(turn_off_handler))
+        .route("/api/is-online", get(is_online_handler))
         .route_layer(middleware::from_fn_with_state(
             config.clone(),
             auth_middleware,

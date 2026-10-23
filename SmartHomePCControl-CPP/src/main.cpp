@@ -12,7 +12,7 @@
 // --- Configuration --- //
 static std::string DEVICE_MAC;
 static std::string SERVER_IP;
-static std::string HOME_API_KEY;
+static std::string WEB_API_KEY;
 static const int SHUTDOWN_PORT = 10675;
 static const int PROBE_PORT = 3389;
 
@@ -77,10 +77,12 @@ bool parse_request(const char* buffer, HttpRequest& req) {
     const char* auth = strcasestr_custom(buffer, "authorization: bearer ");
     if (auth) {
         auth += 22; // Skip "authorization: bearer "
-        const char* end = strstr(auth, "\r\n");
-        if (end) {
-            req.auth_token = std::string(auth, end - auth);
-        }
+        while (*auth == ' ' || *auth == '\t') ++auth;
+        const char* end = auth;
+        while (*end && *end != '\r' && *end != '\n') ++end;
+        const char* token_end = end;
+        while (token_end > auth && (token_end[-1] == ' ' || token_end[-1] == '\t')) --token_end;
+        req.auth_token = std::string(auth, token_end - auth);
     }
     
     return true;
@@ -88,11 +90,11 @@ bool parse_request(const char* buffer, HttpRequest& req) {
 
 // --- Authentication --- //
 bool is_authorized(const HttpRequest& req) {
-    if (HOME_API_KEY.empty()) {
-        std::cerr << "Warning: HOME_API_KEY is not set!" << std::endl;
+    if (WEB_API_KEY.empty()) {
+        std::cerr << "Warning: WEB_API_KEY is not set!" << std::endl;
         return false;
     }
-    return req.auth_token == HOME_API_KEY;
+    return !req.auth_token.empty() && req.auth_token == WEB_API_KEY;
 }
 
 // --- Core Logic --- //
@@ -214,7 +216,7 @@ void handle_request(int client_fd, const HttpRequest& req) {
     }
 
     // Route
-    if (req.path == "/turn-on") {
+    if (req.path == "/api/turn-on") {
         std::cout << "Action: Magic packet to " << DEVICE_MAC << std::endl;
         if (send_magic_packet(DEVICE_MAC)) {
             send_ok(client_fd, "Magic packet sent.");
@@ -224,7 +226,7 @@ void handle_request(int client_fd, const HttpRequest& req) {
             std::cerr << "Result: Failure" << std::endl;
         }
     }
-    else if (req.path == "/turn-off") {
+    else if (req.path == "/api/turn-off") {
         std::cout << "Action: Shutdown to " << SERVER_IP << ":" << SHUTDOWN_PORT << std::endl;
         if (send_shutdown_command()) {
             send_ok(client_fd, "Shutdown command sent.");
@@ -234,7 +236,7 @@ void handle_request(int client_fd, const HttpRequest& req) {
             std::cerr << "Result: Failure" << std::endl;
         }
     }
-    else if (req.path == "/is-online") {
+    else if (req.path == "/api/is-online") {
         std::cout << "Action: Check " << SERVER_IP << ":" << PROBE_PORT << std::endl;
         bool online = is_pc_online();
         send_ok(client_fd, online ? "true" : "false");
@@ -250,7 +252,7 @@ int main(int argc, char** argv) {
     // Load config
     DEVICE_MAC = get_env("DEVICE_MAC", "00:00:00:00:00:00");
     SERVER_IP = get_env("SERVER_IP", "127.0.0.1");
-    HOME_API_KEY = get_env("HOME_API_KEY", "");
+    WEB_API_KEY = get_env("WEB_API_KEY", "");
 
     int port = 8080;
     if (argc > 1) {
@@ -259,9 +261,9 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "--- SmartHomePCControl-CPP (Micro) ---" << std::endl;
-    std::cout << "  DEVICE_MAC: " << DEVICE_MAC << std::endl;
-    std::cout << "  SERVER_IP:  " << SERVER_IP << std::endl;
-    std::cout << "  HOME_API_KEY: " << (HOME_API_KEY.empty() ? "NOT SET" : "****") << std::endl;
+    std::cout << "  DEVICE_MAC:  " << DEVICE_MAC << std::endl;
+    std::cout << "  SERVER_IP:   " << SERVER_IP << std::endl;
+    std::cout << "  WEB_API_KEY: " << (WEB_API_KEY.empty() ? "NOT SET" : "****") << std::endl;
     std::cout << "--------------------------------------" << std::endl;
 
     // Create server socket
