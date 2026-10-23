@@ -4,6 +4,8 @@
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
+#include <vector>
+#include <queue>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -21,42 +23,11 @@ static const int SHUTDOWN_PORT = 10675;
 static const int PROBE_PORT = 3389;
 
 // Concurrency & Rate Limiting Constants
-static const int MAX_CONCURRENT_THREADS = 5;      // Tối đa 5 thread xử lý song song, vượt quá sẽ block
+static const int THREAD_POOL_SIZE = 3;            // Cố định 3 worker threads, khởi tạo 1 lần duy nhất, không cấp phát/hủy luồng liên tục
+static const int MAX_PENDING_QUEUE = 5;           // Giới hạn hàng đợi, đầy sẽ block luồng accept (backpressure)
 static const double MAX_REQUESTS_PER_SECOND = 5.0; // Tối đa 5 requests/s cho toàn bộ client
 
-// --- Concurrency & Rate Limiter Utilities --- //
-class Semaphore {
-private:
-    std::mutex mtx;
-    std::condition_variable cv;
-    int count;
-
-public:
-    explicit Semaphore(int initial) : count(initial) {}
-
-    void acquire() {
-        std::unique_lock<std::mutex> lock(mtx);
-        while (count <= 0) {
-            cv.wait(lock);
-        }
-        --count;
-    }
-
-    void release() {
-        std::unique_lock<std::mutex> lock(mtx);
-        ++count;
-        cv.notify_one();
-    }
-};
-
-struct SemaphoreGuard {
-    Semaphore& sem;
-    explicit SemaphoreGuard(Semaphore& s) : sem(s) {}
-    ~SemaphoreGuard() { sem.release(); }
-    SemaphoreGuard(const SemaphoreGuard&) = delete;
-    SemaphoreGuard& operator=(const SemaphoreGuard&) = delete;
-};
-
+// --- Rate Limiter (Token Bucket) --- //
 class RateLimiter {
 private:
     std::mutex mtx;
@@ -323,6 +294,90 @@ void handle_request(int client_fd, const HttpRequest& req) {
     }
 }
 
+void process_client(int client_fd) {
+    // Timeout socket 3 giây để tránh client giữ kết nối làm treo worker
+    struct timeval tv = {3, 0};
+    setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    // Read request
+    char buffer[4096] = {0};
+    ssize_t n = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+
+    if (n > 0) {
+        HttpRequest req;
+        if (parse_request(buffer, req)) {
+            handle_request(client_fd, req);
+        } else {
+            send_not_found(client_fd);
+        }
+    }
+
+    close(client_fd);
+}
+
+// --- Fixed Thread Pool (Zero-overhead per request) --- //
+class ThreadPool {
+private:
+    std::vector<std::thread> workers;
+    std::queue<int> tasks;
+    std::mutex queue_mutex;
+    std::condition_variable cv_task;
+    std::condition_variable cv_space;
+    size_t max_queue_size;
+    bool stop;
+
+public:
+    ThreadPool(size_t threads, size_t max_queue)
+        : max_queue_size(max_queue), stop(false) {
+        for (size_t i = 0; i < threads; ++i) {
+            workers.emplace_back([this]() {
+                while (true) {
+                    int client_fd = -1;
+                    {
+                        std::unique_lock<std::mutex> lock(this->queue_mutex);
+                        this->cv_task.wait(lock, [this]() {
+                            return this->stop || !this->tasks.empty();
+                        });
+                        if (this->stop && this->tasks.empty()) return;
+                        client_fd = this->tasks.front();
+                        this->tasks.pop();
+                        this->cv_space.notify_one();
+                    }
+                    if (client_fd >= 0) {
+                        process_client(client_fd);
+                    }
+                }
+            });
+        }
+    }
+
+    void enqueue(int client_fd) {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        cv_space.wait(lock, [this]() {
+            return stop || tasks.size() < max_queue_size;
+        });
+        if (stop) {
+            close(client_fd);
+            return;
+        }
+        tasks.push(client_fd);
+        cv_task.notify_one();
+    }
+
+    ~ThreadPool() {
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex);
+            stop = true;
+        }
+        cv_task.notify_all();
+        cv_space.notify_all();
+        for (std::thread &worker : workers) {
+            if (worker.joinable()) worker.join();
+        }
+    }
+};
+
 // --- Main Server --- //
 int main(int argc, char** argv) {
     // Load config
@@ -340,7 +395,8 @@ int main(int argc, char** argv) {
     std::cout << "  DEVICE_MAC:             " << DEVICE_MAC << std::endl;
     std::cout << "  SERVER_IP:              " << SERVER_IP << std::endl;
     std::cout << "  WEB_API_KEY:            " << (WEB_API_KEY.empty() ? "NOT SET" : "****") << std::endl;
-    std::cout << "  MAX_CONCURRENT_THREADS: " << MAX_CONCURRENT_THREADS << std::endl;
+    std::cout << "  THREAD_POOL_SIZE:       " << THREAD_POOL_SIZE << std::endl;
+    std::cout << "  MAX_PENDING_QUEUE:      " << MAX_PENDING_QUEUE << std::endl;
     std::cout << "  MAX_REQUESTS_PER_SECOND:" << MAX_REQUESTS_PER_SECOND << std::endl;
     std::cout << "--------------------------------------" << std::endl;
 
@@ -373,7 +429,7 @@ int main(int argc, char** argv) {
 
     std::cout << "Server listening on port " << port << "..." << std::endl;
 
-    Semaphore thread_sem(MAX_CONCURRENT_THREADS);
+    ThreadPool pool(THREAD_POOL_SIZE, MAX_PENDING_QUEUE);
     RateLimiter rate_limiter(MAX_REQUESTS_PER_SECOND);
 
     // Main loop
@@ -395,33 +451,8 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // 2. Concurrency limit: block nếu đã đạt MAX_CONCURRENT_THREADS đang chạy
-        thread_sem.acquire();
-
-        // 3. Spawn thread xử lý bất đồng bộ
-        std::thread([client_fd, &thread_sem]() {
-            SemaphoreGuard guard(thread_sem);
-
-            // Timeout socket 3 giây để tránh client giữ kết nối làm treo thread
-            struct timeval tv = {3, 0};
-            setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-            setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-            // Read request
-            char buffer[4096] = {0};
-            ssize_t n = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-            
-            if (n > 0) {
-                HttpRequest req;
-                if (parse_request(buffer, req)) {
-                    handle_request(client_fd, req);
-                } else {
-                    send_not_found(client_fd);
-                }
-            }
-
-            close(client_fd);
-        }).detach();
+        // 2. Đưa vào Fixed Thread Pool (nếu queue đầy sẽ block luồng accept để backpressure)
+        pool.enqueue(client_fd);
     }
 
     close(server_fd);
