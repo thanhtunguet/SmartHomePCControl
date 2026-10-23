@@ -8,6 +8,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
 
 // --- Configuration --- //
 static std::string DEVICE_MAC;
@@ -15,6 +19,77 @@ static std::string SERVER_IP;
 static std::string WEB_API_KEY;
 static const int SHUTDOWN_PORT = 10675;
 static const int PROBE_PORT = 3389;
+
+// Concurrency & Rate Limiting Constants
+static const int MAX_CONCURRENT_THREADS = 5;      // Tối đa 5 thread xử lý song song, vượt quá sẽ block
+static const double MAX_REQUESTS_PER_SECOND = 5.0; // Tối đa 5 requests/s cho toàn bộ client
+
+// --- Concurrency & Rate Limiter Utilities --- //
+class Semaphore {
+private:
+    std::mutex mtx;
+    std::condition_variable cv;
+    int count;
+
+public:
+    explicit Semaphore(int initial) : count(initial) {}
+
+    void acquire() {
+        std::unique_lock<std::mutex> lock(mtx);
+        while (count <= 0) {
+            cv.wait(lock);
+        }
+        --count;
+    }
+
+    void release() {
+        std::unique_lock<std::mutex> lock(mtx);
+        ++count;
+        cv.notify_one();
+    }
+};
+
+struct SemaphoreGuard {
+    Semaphore& sem;
+    explicit SemaphoreGuard(Semaphore& s) : sem(s) {}
+    ~SemaphoreGuard() { sem.release(); }
+    SemaphoreGuard(const SemaphoreGuard&) = delete;
+    SemaphoreGuard& operator=(const SemaphoreGuard&) = delete;
+};
+
+class RateLimiter {
+private:
+    std::mutex mtx;
+    double tokens;
+    double capacity;
+    double refill_rate; // tokens per second
+    std::chrono::steady_clock::time_point last_check;
+
+public:
+    explicit RateLimiter(double max_reqs_per_sec)
+        : tokens(max_reqs_per_sec),
+          capacity(max_reqs_per_sec),
+          refill_rate(max_reqs_per_sec),
+          last_check(std::chrono::steady_clock::now()) {}
+
+    bool try_acquire() {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto now = std::chrono::steady_clock::now();
+        std::chrono::duration<double> elapsed = now - last_check;
+        last_check = now;
+
+        tokens += elapsed.count() * refill_rate;
+        if (tokens > capacity) {
+            tokens = capacity;
+        }
+
+        if (tokens >= 1.0) {
+            tokens -= 1.0;
+            return true;
+        }
+        return false;
+    }
+};
 
 const char* get_env(const char* name, const char* default_val) {
     const char* value = std::getenv(name);
@@ -37,6 +112,7 @@ void send_response(int client_fd, int status, const char* status_text, const cha
 
 inline void send_ok(int fd, const char* body) { send_response(fd, 200, "OK", body); }
 inline void send_unauthorized(int fd) { send_response(fd, 401, "Unauthorized", "Unauthorized"); }
+inline void send_too_many_requests(int fd) { send_response(fd, 429, "Too Many Requests", "Too Many Requests\n"); }
 inline void send_not_found(int fd) { send_response(fd, 404, "Not Found", "Not Found"); }
 inline void send_error(int fd, const char* msg) { send_response(fd, 500, "Internal Server Error", msg); }
 
@@ -261,9 +337,11 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "--- SmartHomePCControl-CPP (Micro) ---" << std::endl;
-    std::cout << "  DEVICE_MAC:  " << DEVICE_MAC << std::endl;
-    std::cout << "  SERVER_IP:   " << SERVER_IP << std::endl;
-    std::cout << "  WEB_API_KEY: " << (WEB_API_KEY.empty() ? "NOT SET" : "****") << std::endl;
+    std::cout << "  DEVICE_MAC:             " << DEVICE_MAC << std::endl;
+    std::cout << "  SERVER_IP:              " << SERVER_IP << std::endl;
+    std::cout << "  WEB_API_KEY:            " << (WEB_API_KEY.empty() ? "NOT SET" : "****") << std::endl;
+    std::cout << "  MAX_CONCURRENT_THREADS: " << MAX_CONCURRENT_THREADS << std::endl;
+    std::cout << "  MAX_REQUESTS_PER_SECOND:" << MAX_REQUESTS_PER_SECOND << std::endl;
     std::cout << "--------------------------------------" << std::endl;
 
     // Create server socket
@@ -295,6 +373,9 @@ int main(int argc, char** argv) {
 
     std::cout << "Server listening on port " << port << "..." << std::endl;
 
+    Semaphore thread_sem(MAX_CONCURRENT_THREADS);
+    RateLimiter rate_limiter(MAX_REQUESTS_PER_SECOND);
+
     // Main loop
     while (true) {
         sockaddr_in client_addr;
@@ -306,20 +387,41 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // Read request
-        char buffer[4096] = {0};
-        ssize_t n = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-        
-        if (n > 0) {
-            HttpRequest req;
-            if (parse_request(buffer, req)) {
-                handle_request(client_fd, req);
-            } else {
-                send_not_found(client_fd);
-            }
+        // 1. Rate limiter: tối đa MAX_REQUESTS_PER_SECOND cho tất cả client để chống spam
+        if (!rate_limiter.try_acquire()) {
+            std::cerr << "Rate limit exceeded (" << MAX_REQUESTS_PER_SECOND << " req/s). Returning 429." << std::endl;
+            send_too_many_requests(client_fd);
+            close(client_fd);
+            continue;
         }
 
-        close(client_fd);
+        // 2. Concurrency limit: block nếu đã đạt MAX_CONCURRENT_THREADS đang chạy
+        thread_sem.acquire();
+
+        // 3. Spawn thread xử lý bất đồng bộ
+        std::thread([client_fd, &thread_sem]() {
+            SemaphoreGuard guard(thread_sem);
+
+            // Timeout socket 3 giây để tránh client giữ kết nối làm treo thread
+            struct timeval tv = {3, 0};
+            setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+            // Read request
+            char buffer[4096] = {0};
+            ssize_t n = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+            
+            if (n > 0) {
+                HttpRequest req;
+                if (parse_request(buffer, req)) {
+                    handle_request(client_fd, req);
+                } else {
+                    send_not_found(client_fd);
+                }
+            }
+
+            close(client_fd);
+        }).detach();
     }
 
     close(server_fd);

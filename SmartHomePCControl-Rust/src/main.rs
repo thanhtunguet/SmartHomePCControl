@@ -11,13 +11,55 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+// --- Concurrency & Rate Limiting Constants --- //
+const MAX_CONCURRENT_REQUESTS: usize = 5;       // Tối đa 5 request xử lý đồng thời, vượt quá sẽ đợi (await/block)
+const MAX_REQUESTS_PER_SECOND: f64 = 5.0;       // Tối đa 5 requests/s cho toàn bộ client
+
+// --- Rate Limiter (Token Bucket) --- //
+struct RateLimiter {
+    tokens: f64,
+    capacity: f64,
+    refill_rate: f64,
+    last_check: std::time::Instant,
+}
+
+impl RateLimiter {
+    fn new(max_reqs_per_sec: f64) -> Self {
+        Self {
+            tokens: max_reqs_per_sec,
+            capacity: max_reqs_per_sec,
+            refill_rate: max_reqs_per_sec,
+            last_check: std::time::Instant::now(),
+        }
+    }
+
+    fn try_acquire(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let elapsed = (now - self.last_check).as_secs_f64();
+        self.last_check = now;
+
+        self.tokens += elapsed * self.refill_rate;
+        if self.tokens > self.capacity {
+            self.tokens = self.capacity;
+        }
+
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 // --- Configuration --- //
 
-#[derive(Clone)]
 struct AppConfig {
     device_mac: String,
     server_ip: String,
     web_api_key: String,
+    rate_limiter: std::sync::Mutex<RateLimiter>,
+    concurrency_semaphore: tokio::sync::Semaphore,
 }
 
 impl AppConfig {
@@ -32,11 +74,46 @@ impl AppConfig {
             device_mac,
             server_ip,
             web_api_key,
+            rate_limiter: std::sync::Mutex::new(RateLimiter::new(MAX_REQUESTS_PER_SECOND)),
+            concurrency_semaphore: tokio::sync::Semaphore::new(MAX_CONCURRENT_REQUESTS),
         }
     }
 }
 
-// --- Authentication Middleware --- //
+// --- Middlewares --- //
+
+async fn rate_limit_middleware(
+    State(config): State<Arc<AppConfig>>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let allowed = {
+        let mut limiter = config.rate_limiter.lock().unwrap_or_else(|p| p.into_inner());
+        limiter.try_acquire()
+    };
+
+    if !allowed {
+        warn!("Rate limit exceeded (max {} req/s). Returning 429 Too Many Requests.", MAX_REQUESTS_PER_SECOND);
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    Ok(next.run(request).await)
+}
+
+async fn concurrency_middleware(
+    State(config): State<Arc<AppConfig>>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    // Acquire permit: waits (awaits/blocks) if MAX_CONCURRENT_REQUESTS permits are currently held
+    let _permit = config
+        .concurrency_semaphore
+        .acquire()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(next.run(request).await)
+}
 
 async fn auth_middleware(
     State(config): State<Arc<AppConfig>>,
@@ -234,12 +311,18 @@ async fn main() {
     // Print configuration
     println!("--- SmartHomePCControl-Rust ---");
     println!("Configuration:");
-    println!("  - DEVICE_MAC: {}", config.device_mac);
-    println!("  - SERVER_IP:  {}", config.server_ip);
-    println!("  - WEB_API_KEY: {}", if config.web_api_key.is_empty() { "NOT SET" } else { "****" });
+    println!("  - DEVICE_MAC:              {}", config.device_mac);
+    println!("  - SERVER_IP:               {}", config.server_ip);
+    println!("  - WEB_API_KEY:             {}", if config.web_api_key.is_empty() { "NOT SET" } else { "****" });
+    println!("  - MAX_CONCURRENT_REQUESTS: {}", MAX_CONCURRENT_REQUESTS);
+    println!("  - MAX_REQUESTS_PER_SECOND: {}", MAX_REQUESTS_PER_SECOND);
     println!("------------------------------");
 
     // Build the application routes
+    // Order of execution for incoming requests:
+    // 1. rate_limit_middleware (outermost: reject burst spam with 429)
+    // 2. concurrency_middleware (wait if 5 requests are active)
+    // 3. auth_middleware (authenticate Bearer token)
     let app = Router::new()
         .route("/api/turn-on", get(turn_on_handler))
         .route("/api/turn-off", get(turn_off_handler))
@@ -247,6 +330,14 @@ async fn main() {
         .route_layer(middleware::from_fn_with_state(
             config.clone(),
             auth_middleware,
+        ))
+        .route_layer(middleware::from_fn_with_state(
+            config.clone(),
+            concurrency_middleware,
+        ))
+        .route_layer(middleware::from_fn_with_state(
+            config.clone(),
+            rate_limit_middleware,
         ))
         .with_state(config);
 
