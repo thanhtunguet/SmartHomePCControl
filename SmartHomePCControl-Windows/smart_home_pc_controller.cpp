@@ -546,4 +546,3 @@ void HandleShutdownCommand()
     // Initiate system shutdown
     ExitWindowsEx(EWX_SHUTDOWN | EWX_FORCE, SHTDN_REASON_MAJOR_APPLICATION);
 }
-
