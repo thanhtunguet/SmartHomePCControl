@@ -25,7 +25,8 @@ static void handle_signal(int sig) {
 
 void print_help(const char* prog) {
     std::cout <<
-        "Usage: " << prog << " [--port N] [--message TEXT] [--bind ADDR] [--udp]\n"
+        "Usage: " << prog << " [PORT] [--port N] [--message TEXT] [--bind ADDR] [--udp]\n"
+        "  PORT            Port to listen on (positional, e.g., from systemd service).\n"
         "  --port N        Port to listen on. Default: 4000\n"
         "  --message TEXT  Activation message. Default: \"shutdown-my-pc\"\n"
         "  --bind ADDR     Bind address (e.g., 127.0.0.1). Default: 0.0.0.0\n"
@@ -34,10 +35,34 @@ void print_help(const char* prog) {
 }
 
 static inline std::string trim(const std::string& s) {
-    size_t b = s.find_first_not_of(" \t\r\n");
-    if (b == std::string::npos) return "";
-    size_t e = s.find_last_not_of(" \t\r\n");
-    return s.substr(b, e - b + 1);
+    if (s.empty()) return "";
+
+    auto is_trim_char = [](unsigned char c) {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+               c == '\0' || c == '\v' || c == '\f';
+    };
+
+    size_t b = 0;
+    while (b < s.size() && is_trim_char(static_cast<unsigned char>(s[b]))) {
+        ++b;
+    }
+    if (b == s.size()) return "";
+
+    size_t e = s.size() - 1;
+    while (e > b && is_trim_char(static_cast<unsigned char>(s[e]))) {
+        --e;
+    }
+
+    std::string result = s.substr(b, e - b + 1);
+    // Truncate at first embedded null byte if client sent a null-terminated string
+    size_t null_pos = result.find('\0');
+    if (null_pos != std::string::npos) {
+        result.resize(null_pos);
+        while (!result.empty() && is_trim_char(static_cast<unsigned char>(result.back()))) {
+            result.pop_back();
+        }
+    }
+    return result;
 }
 
 static inline bool set_nonblock(int fd) {
@@ -105,8 +130,19 @@ int main(int argc, char** argv) {
         else if (a == "--message" && i + 1 < argc) { message = argv[++i]; }
         else if (a == "--bind" && i + 1 < argc) { bind_addr = argv[++i]; }
         else if (a == "--udp") { enable_udp = true; }
+        else if (a.rfind("--", 0) != 0 && a.rfind("-", 0) != 0) {
+            try {
+                port = static_cast<uint16_t>(std::stoi(a));
+            } catch (...) {
+                std::cerr << "Invalid port argument: " << a << "\n";
+                print_help(argv[0]);
+                return 1;
+            }
+        }
         else { std::cerr << "Unknown option: " << a << "\n"; print_help(argv[0]); return 1; }
     }
+
+    message = trim(message);
 
     if (::pipe(g_signal_pipe) < 0) {
         perror("pipe");
