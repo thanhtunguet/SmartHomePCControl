@@ -61,7 +61,7 @@ int main() {
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(PORT);
 
-    if (bind(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
+    if (::bind(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
         cerr << "Failed to bind server socket\n";
         close(serverSock);
         return 1;
